@@ -155,10 +155,14 @@ def reply_to_message(
     body: str = "",
     reply_all: bool = False,
     additional_cc: str | None = None,
+    attachments: list[str] | None = None,
 ) -> dict:
-    """Reply to a message; set reply_all=True to reply to all recipients."""
+    """Reply to a message; set reply_all=True to reply to all recipients.
+
+    attachments: list of LOCAL file paths to attach (read from disk server-side).
+    """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.reply_to_message(message_id, body=body, reply_all=reply_all, additional_cc=additional_cc))
+    data = run_tool(lambda: api.reply_to_message(message_id, body=body, reply_all=reply_all, additional_cc=additional_cc, attachments=attachments))
     return ok(resolved, data)
 
 
@@ -168,10 +172,14 @@ def forward_message(
     message_id: str = "",
     to: str = "",
     body: str | None = None,
+    attachments: list[str] | None = None,
 ) -> dict:
-    """Forward a message to another recipient."""
+    """Forward a message to another recipient.
+
+    attachments: list of LOCAL file paths to attach (read from disk server-side).
+    """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.forward_message(message_id, to=to, body=body))
+    data = run_tool(lambda: api.forward_message(message_id, to=to, body=body, attachments=attachments))
     return ok(resolved, data)
 
 
