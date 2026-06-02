@@ -189,14 +189,15 @@ def create_draft(
     to: str = "",
     subject: str = "",
     body: str = "",
+    cc: str | None = None,
     attachments: list[str] | None = None,
 ) -> dict:
-    """Create a draft message.
+    """Create a draft message (supports cc + attachments together).
 
     attachments: list of LOCAL file paths to attach (read from disk server-side).
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.create_draft(to=to, subject=subject, body=body, attachments=attachments))
+    data = run_tool(lambda: api.create_draft(to=to, subject=subject, body=body, cc=cc, attachments=attachments))
     return ok(resolved, data)
 
 
@@ -204,17 +205,21 @@ def create_draft(
 def update_draft(
     account: str | None = None,
     draft_id: str = "",
-    to: str = "",
-    subject: str = "",
-    body: str = "",
+    to: str | None = None,
+    subject: str | None = None,
+    body: str | None = None,
+    cc: str | None = None,
     attachments: list[str] | None = None,
 ) -> dict:
-    """Update an existing draft message.
+    """Update an existing draft, preserving fields you don't pass.
 
-    attachments: list of LOCAL file paths to attach (read from disk server-side).
+    Only provided fields change; To/Subject/Body/Cc and existing attachments are
+    kept otherwise (e.g. pass only `attachments` to add a file without wiping the
+    rest). Pass `attachments` to replace the file set; omit it to keep existing.
+    attachments: list of LOCAL file paths (read from disk server-side).
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.update_draft(draft_id, to=to, subject=subject, body=body, attachments=attachments))
+    data = run_tool(lambda: api.update_draft(draft_id, to=to, subject=subject, body=body, cc=cc, attachments=attachments))
     return ok(resolved, data)
 
 
