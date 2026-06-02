@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "google-workspace-mcp"
+version = "0.1.0"
+description = "Aligned MCP servers for Gmail, Calendar, and Sheets with persistent, multi-account auth"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Nitai Aharoni" }]
+dependencies = [
+    "mcp>=1.12",
+    "google-auth-core>=0.1.0",
+    "gmail-cli>=1.4.0",
+    "google-calendar-cli>=1.6.0",
+    "google-api-python-client>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pytest-anyio>=0.0.0", "anyio>=4"]
+
+[project.scripts]
+gmail-mcp = "google_workspace_mcp.gmail.server:main"
+gcal-mcp = "google_workspace_mcp.calendar.server:main"
+gsheets-mcp = "google_workspace_mcp.sheets.server:main"
+gdocs-mcp = "google_workspace_mcp.docs.server:main"
+
+[tool.setuptools.packages.find]
+include = ["google_workspace_mcp*"]
+
+[tool.pytest.ini_options]
+anyio_mode = "auto"
