@@ -136,10 +136,15 @@ def send_message(
     subject: str = "",
     body: str = "",
     cc: str | None = None,
+    attachments: list[str] | None = None,
 ) -> dict:
-    """Send an email message."""
+    """Send an email message.
+
+    attachments: list of LOCAL file paths to attach (e.g. ["/Users/me/deck.pdf"]).
+    The files are read from disk on the server, so large binaries are fine.
+    """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.send_message(to=to, subject=subject, body=body, cc=cc))
+    data = run_tool(lambda: api.send_message(to=to, subject=subject, body=body, cc=cc, attachments=attachments))
     return ok(resolved, data)
 
 
@@ -176,10 +181,14 @@ def create_draft(
     to: str = "",
     subject: str = "",
     body: str = "",
+    attachments: list[str] | None = None,
 ) -> dict:
-    """Create a draft message."""
+    """Create a draft message.
+
+    attachments: list of LOCAL file paths to attach (read from disk server-side).
+    """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.create_draft(to=to, subject=subject, body=body))
+    data = run_tool(lambda: api.create_draft(to=to, subject=subject, body=body, attachments=attachments))
     return ok(resolved, data)
 
 
@@ -190,10 +199,14 @@ def update_draft(
     to: str = "",
     subject: str = "",
     body: str = "",
+    attachments: list[str] | None = None,
 ) -> dict:
-    """Update an existing draft message."""
+    """Update an existing draft message.
+
+    attachments: list of LOCAL file paths to attach (read from disk server-side).
+    """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.update_draft(draft_id, to=to, subject=subject, body=body))
+    data = run_tool(lambda: api.update_draft(draft_id, to=to, subject=subject, body=body, attachments=attachments))
     return ok(resolved, data)
 
 
