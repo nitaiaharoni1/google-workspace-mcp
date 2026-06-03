@@ -58,5 +58,38 @@ def replace_all_text(account: str | None = None, document_id: str = "", find: st
     return ok(resolved, run_tool(lambda: api.replace_all_text(document_id, find, replace, match_case)))
 
 
+# --- format / structure ---
+@register(mcp, mutating=True)
+def format_text(account: str | None = None, document_id: str = "", start_index: int = 1, end_index: int = 1, bold: bool | None = None, italic: bool | None = None, underline: bool | None = None, font_size: float | None = None, link_url: str | None = None, foreground_color: str | None = None) -> dict:
+    """Style a character range (bold/italic/underline, font size in PT, link URL, hex foreground color)."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.format_text(document_id, start_index, end_index, bold, italic, underline, font_size, link_url, foreground_color))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def set_paragraph_style(account: str | None = None, document_id: str = "", start_index: int = 1, end_index: int = 1, named_style: str = "NORMAL_TEXT") -> dict:
+    """Apply a paragraph named style (NORMAL_TEXT, TITLE, SUBTITLE, HEADING_1..HEADING_6) to a range."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.set_paragraph_style(document_id, start_index, end_index, named_style))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def insert_bullets(account: str | None = None, document_id: str = "", start_index: int = 1, end_index: int = 1, bullet_preset: str = "BULLET_DISC_CIRCLE_SQUARE") -> dict:
+    """Turn the paragraphs in a range into a bulleted/numbered list (e.g. BULLET_DISC_CIRCLE_SQUARE, NUMBERED_DECIMAL_ALPHA_ROMAN)."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.insert_bullets(document_id, start_index, end_index, bullet_preset))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True, destructive=True)
+def delete_range(account: str | None = None, document_id: str = "", start_index: int = 1, end_index: int = 1) -> dict:
+    """Delete content in the given character index range."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.delete_range(document_id, start_index, end_index))
+    return ok(resolved, data)
+
+
 def main():
     mcp.run()

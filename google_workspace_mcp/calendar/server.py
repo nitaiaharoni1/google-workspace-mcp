@@ -329,6 +329,23 @@ def remove_attendees(
 
 
 @register(mcp, mutating=True)
+def respond_to_event(
+    account: str | None = None,
+    event_id: str = "",
+    response: str = "",
+    calendar_id: str = "primary",
+    send_updates: str = "all",
+) -> dict:
+    """Respond to a calendar invitation: accept / decline / tentatively accept.
+
+    response: one of "accepted", "declined", "tentative", "needsAction".
+    """
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.respond_to_event(event_id, response, calendar_id=calendar_id, send_updates=send_updates))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
 def propose_new_time(
     account: str | None = None,
     event_id: str = "",

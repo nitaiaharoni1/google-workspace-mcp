@@ -78,6 +78,40 @@ def list_threads(
 
 
 @register(mcp)
+def get_thread(
+    account: str | None = None,
+    thread_id: str = "",
+    format: str = "full",
+) -> dict:
+    """Get a whole conversation (all messages in the thread) by ID in one call.
+
+    format: full, metadata, or minimal.
+    """
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.get_thread(thread_id, format=format))
+    return ok(resolved, data)
+
+
+@register(mcp)
+def download_attachment(
+    account: str | None = None,
+    message_id: str = "",
+    output_dir: str | None = None,
+    attachment_id: str | None = None,
+) -> dict:
+    """Save a message's attachment(s) to local disk and return their paths.
+
+    Reads from Gmail and writes the files to output_dir (defaults to the system
+    temp dir, created if needed) using each attachment's own filename. Pass
+    attachment_id to save only that one. Returns a list of
+    {"filename", "path", "mime_type", "size"} dicts.
+    """
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.download_attachment(message_id, output_dir=output_dir, attachment_id=attachment_id))
+    return ok(resolved, data)
+
+
+@register(mcp)
 def list_labels(account: str | None = None) -> dict:
     """List all labels (system and user-created) in the mailbox."""
     api, resolved = _api(account)
@@ -245,6 +279,18 @@ def update_draft(
 
 
 @register(mcp, mutating=True)
+def send_draft(account: str | None = None, draft_id: str = "") -> dict:
+    """Send an existing draft, completing the draft -> review -> send loop.
+
+    Sends the draft as-is (threaded if it was a threaded draft). Returns the
+    sent message.
+    """
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.send_draft(draft_id))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
 def modify_labels(
     account: str | None = None,
     message_id: str = "",
@@ -398,6 +444,14 @@ def delete_label(account: str | None = None, label_id: str = "") -> dict:
     """Permanently delete a label from the mailbox."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.delete_label(label_id))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True, destructive=True)
+def delete_draft(account: str | None = None, draft_id: str = "") -> dict:
+    """Permanently delete a draft (e.g. to clean up a superseded one)."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.delete_draft(draft_id))
     return ok(resolved, data)
 
 

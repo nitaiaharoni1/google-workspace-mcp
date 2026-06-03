@@ -107,5 +107,55 @@ def delete_sheet(account: str | None = None, spreadsheet_id: str = "", sheet_id:
     return ok(resolved, data)
 
 
+# --- FORMATTING / STRUCTURE (mutating) tools ---
+
+@register(mcp, mutating=True)
+def format_cells(account: str | None = None, spreadsheet_id: str = "", range: str = "", bold: bool | None = None, italic: bool | None = None, font_size: int | None = None, text_color: str | None = None, background_color: str | None = None, number_format: str | None = None, horizontal_alignment: str | None = None, wrap: bool | None = None) -> dict:
+    """Apply formatting to a range (A1 notation). Colors are hex (e.g. '#FF0000'); horizontal_alignment is LEFT/CENTER/RIGHT."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.format_cells(spreadsheet_id, range, bold, italic, font_size, text_color, background_color, number_format, horizontal_alignment, wrap))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def sort_range(account: str | None = None, spreadsheet_id: str = "", range: str = "", column: int = 0, ascending: bool = True) -> dict:
+    """Sort a range (A1 notation) by an absolute 0-based sheet column index, ascending or descending."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.sort_range(spreadsheet_id, range, column, ascending))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def set_basic_filter(account: str | None = None, spreadsheet_id: str = "", range: str = "") -> dict:
+    """Set a basic filter over a range (A1 notation)."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.set_basic_filter(spreadsheet_id, range))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def clear_basic_filter(account: str | None = None, spreadsheet_id: str = "", range: str = "") -> dict:
+    """Clear the basic filter from the sheet that contains the given range (A1 notation)."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.clear_basic_filter(spreadsheet_id, range))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def merge_cells(account: str | None = None, spreadsheet_id: str = "", range: str = "", merge_type: str = "MERGE_ALL") -> dict:
+    """Merge cells in a range (A1 notation). merge_type is MERGE_ALL/MERGE_COLUMNS/MERGE_ROWS."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.merge_cells(spreadsheet_id, range, merge_type))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def unmerge_cells(account: str | None = None, spreadsheet_id: str = "", range: str = "") -> dict:
+    """Unmerge any merged cells within a range (A1 notation)."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.unmerge_cells(spreadsheet_id, range))
+    return ok(resolved, data)
+
+
 def main():
     mcp.run()
