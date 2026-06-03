@@ -167,6 +167,27 @@ def reply_to_message(
 
 
 @register(mcp, mutating=True)
+def draft_reply(
+    account: str | None = None,
+    message_id: str = "",
+    body: str = "",
+    reply_all: bool = False,
+    additional_cc: str | None = None,
+    attachments: list[str] | None = None,
+) -> dict:
+    """Create a DRAFT reply kept in the original thread (review before sending).
+
+    Same threading as reply_to_message (In-Reply-To/References + threadId) but
+    saves a draft instead of sending, so it threads correctly when you send it
+    from Gmail. Set reply_all=True to CC the original recipients.
+    attachments: list of LOCAL file paths to attach (read from disk server-side).
+    """
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.draft_reply(message_id, body=body, reply_all=reply_all, additional_cc=additional_cc, attachments=attachments))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
 def forward_message(
     account: str | None = None,
     message_id: str = "",
