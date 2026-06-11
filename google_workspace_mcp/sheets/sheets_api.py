@@ -189,3 +189,101 @@ class SheetsAPI:
         return self.service.spreadsheets().batchUpdate(
             spreadsheetId=spreadsheet_id, body={"requests": [req]}
         ).execute()
+
+    # --- dimensions (columns / rows) ---
+    def _dimension_range(self, spreadsheet_id, range, dimension):
+        grid = self._a1_to_grid_range(spreadsheet_id, range)
+        if dimension == "COLUMNS":
+            start, end = grid.get("startColumnIndex"), grid.get("endColumnIndex")
+            hint = "column letters (e.g. 'Sheet1!A:C')"
+        else:
+            start, end = grid.get("startRowIndex"), grid.get("endRowIndex")
+            hint = "row numbers (e.g. 'Sheet1!2:5')"
+        if start is None or end is None:
+            raise ValueError(f"range must include {hint}")
+        return {"sheetId": grid["sheetId"], "dimension": dimension, "startIndex": start, "endIndex": end}
+
+    def resize_dimension(self, spreadsheet_id, range, dimension, pixel_size=None):
+        dim = self._dimension_range(spreadsheet_id, range, dimension)
+        if pixel_size is None:
+            req = {"autoResizeDimensions": {"dimensions": dim}}
+        else:
+            req = {"updateDimensionProperties": {"range": dim, "properties": {"pixelSize": pixel_size}, "fields": "pixelSize"}}
+        return self.service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id, body={"requests": [req]}
+        ).execute()
+
+    def insert_dimension(self, spreadsheet_id, range, dimension, inherit_from_before=False):
+        dim = self._dimension_range(spreadsheet_id, range, dimension)
+        req = {"insertDimension": {"range": dim, "inheritFromBefore": inherit_from_before}}
+        return self.service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id, body={"requests": [req]}
+        ).execute()
+
+    def delete_dimension(self, spreadsheet_id, range, dimension):
+        dim = self._dimension_range(spreadsheet_id, range, dimension)
+        req = {"deleteDimension": {"range": dim}}
+        return self.service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id, body={"requests": [req]}
+        ).execute()
+
+    # --- sheet-level helpers ---
+    def freeze_panes(self, spreadsheet_id, range, rows=None, cols=None):
+        grid = self._a1_to_grid_range(spreadsheet_id, range)
+        props = {"sheetId": grid["sheetId"], "gridProperties": {}}
+        fields = []
+        if rows is not None:
+            props["gridProperties"]["frozenRowCount"] = rows
+            fields.append("gridProperties.frozenRowCount")
+        if cols is not None:
+            props["gridProperties"]["frozenColumnCount"] = cols
+            fields.append("gridProperties.frozenColumnCount")
+        if not fields:
+            raise ValueError("freeze_panes requires rows and/or cols")
+        req = {"updateSheetProperties": {"properties": props, "fields": ",".join(fields)}}
+        return self.service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id, body={"requests": [req]}
+        ).execute()
+
+    def duplicate_sheet(self, spreadsheet_id, sheet_id, new_title=None):
+        body = {"sourceSheetId": sheet_id}
+        if new_title:
+            body["newSheetName"] = new_title
+        return self.service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id, body={"requests": [{"duplicateSheet": body}]}
+        ).execute()
+
+    def set_borders(self, spreadsheet_id, range, style="SOLID", color="#000000",
+                    top=True, bottom=True, left=True, right=True, inner=False):
+        grid = self._a1_to_grid_range(spreadsheet_id, range)
+        border = {"style": style, "color": self._hex_to_color(color)}
+        body = {"range": grid}
+        if top:
+            body["top"] = border
+        if bottom:
+            body["bottom"] = border
+        if left:
+            body["left"] = border
+        if right:
+            body["right"] = border
+        if inner:
+            body["innerHorizontal"] = border
+            body["innerVertical"] = border
+        return self.service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id, body={"requests": [{"updateBorders": body}]}
+        ).execute()
+
+    def set_data_validation(self, spreadsheet_id, range, allowed_values=None, show_dropdown=True):
+        grid = self._a1_to_grid_range(spreadsheet_id, range)
+        if allowed_values:
+            rule = {
+                "condition": {"type": "ONE_OF_LIST", "values": [{"userEnteredValue": str(v)} for v in allowed_values]},
+                "showCustomUi": show_dropdown,
+                "strict": True,
+            }
+            req = {"setDataValidation": {"range": grid, "rule": rule}}
+        else:
+            req = {"setDataValidation": {"range": grid}}
+        return self.service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id, body={"requests": [req]}
+        ).execute()

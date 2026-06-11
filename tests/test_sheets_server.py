@@ -170,6 +170,129 @@ class TestSheetsAPIUnit:
         assert result["spreadsheetId"] == "sid"
 
 
+class TestSheetsAPIDimensions:
+    """Unit tests for dimension / structure helpers (resize, freeze, borders, validation)."""
+
+    @pytest.fixture
+    def api_with_meta(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().get.return_value.execute.return_value = {
+            "sheets": [{"properties": {"sheetId": 7, "title": "Tab"}}]
+        }
+        svc.spreadsheets().batchUpdate.return_value.execute.return_value = {"replies": [{}]}
+        return api, svc
+
+    def test_resize_columns_pixels(self, api_with_meta):
+        api, svc = api_with_meta
+        api.resize_dimension("sid", "Tab!A:C", "COLUMNS", 120)
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"updateDimensionProperties": {
+                "range": {"sheetId": 7, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 3},
+                "properties": {"pixelSize": 120},
+                "fields": "pixelSize",
+            }}]},
+        )
+
+    def test_resize_columns_autofit(self, api_with_meta):
+        api, svc = api_with_meta
+        api.resize_dimension("sid", "Tab!B:B", "COLUMNS", None)
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"autoResizeDimensions": {
+                "dimensions": {"sheetId": 7, "dimension": "COLUMNS", "startIndex": 1, "endIndex": 2},
+            }}]},
+        )
+
+    def test_resize_rows_requires_row_numbers(self, api_with_meta):
+        api, _ = api_with_meta
+        with pytest.raises(ValueError):
+            api.resize_dimension("sid", "Tab!A:C", "ROWS", 30)
+
+    def test_insert_rows(self, api_with_meta):
+        api, svc = api_with_meta
+        api.insert_dimension("sid", "Tab!3:5", "ROWS")
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"insertDimension": {
+                "range": {"sheetId": 7, "dimension": "ROWS", "startIndex": 2, "endIndex": 5},
+                "inheritFromBefore": False,
+            }}]},
+        )
+
+    def test_delete_columns(self, api_with_meta):
+        api, svc = api_with_meta
+        api.delete_dimension("sid", "Tab!C:D", "COLUMNS")
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"deleteDimension": {
+                "range": {"sheetId": 7, "dimension": "COLUMNS", "startIndex": 2, "endIndex": 4},
+            }}]},
+        )
+
+    def test_freeze_panes(self, api_with_meta):
+        api, svc = api_with_meta
+        api.freeze_panes("sid", "Tab!A1", rows=1, cols=2)
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"updateSheetProperties": {
+                "properties": {"sheetId": 7, "gridProperties": {"frozenRowCount": 1, "frozenColumnCount": 2}},
+                "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
+            }}]},
+        )
+
+    def test_freeze_panes_requires_rows_or_cols(self, api_with_meta):
+        api, _ = api_with_meta
+        with pytest.raises(ValueError):
+            api.freeze_panes("sid", "Tab!A1")
+
+    def test_set_borders_inner(self, api_with_meta):
+        api, svc = api_with_meta
+        api.set_borders("sid", "Tab!A1:B2", style="SOLID", color="#FF0000", inner=True)
+        border = {"style": "SOLID", "color": {"red": 1.0, "green": 0.0, "blue": 0.0}}
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"updateBorders": {
+                "range": {"sheetId": 7, "startColumnIndex": 0, "endColumnIndex": 2, "startRowIndex": 0, "endRowIndex": 2},
+                "top": border, "bottom": border, "left": border, "right": border,
+                "innerHorizontal": border, "innerVertical": border,
+            }}]},
+        )
+
+    def test_set_data_validation_dropdown(self, api_with_meta):
+        api, svc = api_with_meta
+        api.set_data_validation("sid", "Tab!B2", allowed_values=["Yes", "No"])
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"setDataValidation": {
+                "range": {"sheetId": 7, "startColumnIndex": 1, "endColumnIndex": 2, "startRowIndex": 1, "endRowIndex": 2},
+                "rule": {
+                    "condition": {"type": "ONE_OF_LIST", "values": [{"userEnteredValue": "Yes"}, {"userEnteredValue": "No"}]},
+                    "showCustomUi": True,
+                    "strict": True,
+                },
+            }}]},
+        )
+
+    def test_set_data_validation_clear(self, api_with_meta):
+        api, svc = api_with_meta
+        api.set_data_validation("sid", "Tab!B2", allowed_values=None)
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"setDataValidation": {
+                "range": {"sheetId": 7, "startColumnIndex": 1, "endColumnIndex": 2, "startRowIndex": 1, "endRowIndex": 2},
+            }}]},
+        )
+
+    def test_duplicate_sheet(self, api_with_meta):
+        api, svc = api_with_meta
+        api.duplicate_sheet("sid", 7, "Copy")
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"duplicateSheet": {"sourceSheetId": 7, "newSheetName": "Copy"}}]},
+        )
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # (b) Server integration tests — monkeypatch _api
 # ──────────────────────────────────────────────────────────────────────────────
@@ -203,6 +326,10 @@ async def test_list_tools_includes_expected(patched_server):
         "update_range", "batch_update_values", "append_rows",
         "create_spreadsheet", "add_sheet", "rename_sheet",
         "clear_range", "delete_sheet",
+        # dimensions / structure
+        "resize_columns", "resize_rows", "freeze_panes",
+        "insert_rows", "insert_columns", "delete_rows", "delete_columns",
+        "set_borders", "set_data_validation", "duplicate_sheet",
         # common tools
         "list_accounts", "auth_status", "whoami",
     }
