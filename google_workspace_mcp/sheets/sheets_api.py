@@ -73,19 +73,23 @@ class SheetsAPI:
     # --- formatting / structure helpers ---
     def _hex_to_color(self, hex_str):
         h = hex_str.lstrip("#")
+        if len(h) == 3:
+            h = "".join(c * 2 for c in h)
+        if len(h) != 6:
+            raise ValueError(f"invalid hex color: {hex_str!r}")
         return {"red": int(h[0:2], 16) / 255, "green": int(h[2:4], 16) / 255, "blue": int(h[4:6], 16) / 255}
 
-    def _a1_to_grid_range(self, spreadsheet_id, a1):
-        # rpartition already puts the cell part last and the (optional) sheet
-        # name first, for both "Sheet1!A1:C10" and a bare "A1:C10".
-        sheet_name, _, cell_part = a1.rpartition("!")
-        meta = self.get_spreadsheet(spreadsheet_id)
-        sheets = meta.get("sheets", [])
-        if sheet_name:
-            sheet_name = sheet_name.strip("'\"")
-            sheet_id = next(s["properties"]["sheetId"] for s in sheets if s["properties"]["title"] == sheet_name)
-        else:
-            sheet_id = sheets[0]["properties"]["sheetId"]
+    def _hex_to_color_style(self, hex_str):
+        return {"rgbColor": self._hex_to_color(hex_str)}
+
+    def _batch(self, spreadsheet_id, requests):
+        if not requests:
+            return {"replies": []}
+        return self.service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id, body={"requests": requests}
+        ).execute()
+
+    def _cell_part_to_grid(self, sheet_id, cell_part):
         grid = {"sheetId": sheet_id}
         start, _, end = cell_part.partition(":")
         end = end or start
@@ -113,9 +117,37 @@ class SheetsAPI:
             grid["endRowIndex"] = int(end_digits)
         return grid
 
-    def format_cells(self, spreadsheet_id, range, bold=None, italic=None, font_size=None, text_color=None,
-                     background_color=None, number_format=None, horizontal_alignment=None, wrap=None):
-        grid = self._a1_to_grid_range(spreadsheet_id, range)
+    def _resolve_a1(self, spreadsheet_id, a1, meta=None):
+        sheet_name, _, cell_part = a1.rpartition("!")
+        if meta is None:
+            meta = self.get_spreadsheet(spreadsheet_id)
+        sheets = meta.get("sheets", [])
+        if sheet_name:
+            sheet_name = sheet_name.strip("'\"")
+            sheet_id = next(s["properties"]["sheetId"] for s in sheets if s["properties"]["title"] == sheet_name)
+        else:
+            sheet_id = sheets[0]["properties"]["sheetId"]
+            sheet_name = sheets[0]["properties"]["title"]
+        grid = self._cell_part_to_grid(sheet_id, cell_part)
+        start, _, end = cell_part.partition(":")
+        end = end or start
+        start_row = int("".join(c for c in start if c.isdigit()) or "1")
+        end_row = int("".join(c for c in end if c.isdigit()) or str(start_row))
+        start_col = "".join(c for c in start if c.isalpha())
+        end_col = "".join(c for c in end if c.isalpha())
+        return sheet_name, sheet_id, grid, start_row, end_row, start_col, end_col
+
+    def _quoted_sheet_range(self, sheet_name, cell_range):
+        escaped = sheet_name.replace("'", "''")
+        return f"'{escaped}'!{cell_range}"
+
+    def _a1_to_grid_range(self, spreadsheet_id, a1, meta=None):
+        _, _, grid, _, _, _, _ = self._resolve_a1(spreadsheet_id, a1, meta)
+        return grid
+
+    def _format_cells_request(self, grid, bold=None, italic=None, strikethrough=None, underline=None,
+                              font_size=None, text_color=None, background_color=None, number_format=None,
+                              horizontal_alignment=None, vertical_alignment=None, wrap=None):
         fmt = {}
         text_format = {}
         fields = []
@@ -125,17 +157,23 @@ class SheetsAPI:
         if italic is not None:
             text_format["italic"] = italic
             fields.append("userEnteredFormat.textFormat.italic")
+        if strikethrough is not None:
+            text_format["strikethrough"] = strikethrough
+            fields.append("userEnteredFormat.textFormat.strikethrough")
+        if underline is not None:
+            text_format["underline"] = underline
+            fields.append("userEnteredFormat.textFormat.underline")
         if font_size is not None:
             text_format["fontSize"] = font_size
             fields.append("userEnteredFormat.textFormat.fontSize")
         if text_color is not None:
-            text_format["foregroundColor"] = self._hex_to_color(text_color)
-            fields.append("userEnteredFormat.textFormat.foregroundColor")
+            text_format["foregroundColorStyle"] = self._hex_to_color_style(text_color)
+            fields.append("userEnteredFormat.textFormat.foregroundColorStyle")
         if text_format:
             fmt["textFormat"] = text_format
         if background_color is not None:
-            fmt["backgroundColor"] = self._hex_to_color(background_color)
-            fields.append("userEnteredFormat.backgroundColor")
+            fmt["backgroundColorStyle"] = self._hex_to_color_style(background_color)
+            fields.append("userEnteredFormat.backgroundColorStyle")
         if number_format is not None:
             if number_format in {"NUMBER", "CURRENCY", "PERCENT", "DATE", "TIME", "DATE_TIME", "SCIENTIFIC"}:
                 fmt["numberFormat"] = {"type": number_format}
@@ -145,15 +183,88 @@ class SheetsAPI:
         if horizontal_alignment is not None:
             fmt["horizontalAlignment"] = horizontal_alignment
             fields.append("userEnteredFormat.horizontalAlignment")
+        if vertical_alignment is not None:
+            fmt["verticalAlignment"] = vertical_alignment
+            fields.append("userEnteredFormat.verticalAlignment")
         if wrap is not None:
             fmt["wrapStrategy"] = "WRAP" if wrap else "OVERFLOW_CELL"
             fields.append("userEnteredFormat.wrapStrategy")
         if not fields:
             raise ValueError("format_cells requires at least one formatting parameter")
-        req = {"repeatCell": {"range": grid, "cell": {"userEnteredFormat": fmt}, "fields": ",".join(fields)}}
-        return self.service.spreadsheets().batchUpdate(
-            spreadsheetId=spreadsheet_id, body={"requests": [req]}
-        ).execute()
+        return {"repeatCell": {"range": grid, "cell": {"userEnteredFormat": fmt}, "fields": ",".join(fields)}}
+
+    def format_cells(self, spreadsheet_id, range, bold=None, italic=None, strikethrough=None, underline=None,
+                     font_size=None, text_color=None, background_color=None, number_format=None,
+                     horizontal_alignment=None, vertical_alignment=None, wrap=None):
+        grid = self._a1_to_grid_range(spreadsheet_id, range)
+        req = self._format_cells_request(
+            grid, bold, italic, strikethrough, underline, font_size, text_color, background_color,
+            number_format, horizontal_alignment, vertical_alignment, wrap,
+        )
+        return self._batch(spreadsheet_id, [req])
+
+    def _banding_properties(self, header_color=None, first_band_color=None, second_band_color=None, footer_color=None):
+        props = {}
+        if header_color is not None:
+            props["headerColorStyle"] = self._hex_to_color_style(header_color)
+        if first_band_color is not None:
+            props["firstBandColorStyle"] = self._hex_to_color_style(first_band_color)
+        if second_band_color is not None:
+            props["secondBandColorStyle"] = self._hex_to_color_style(second_band_color)
+        if footer_color is not None:
+            props["footerColorStyle"] = self._hex_to_color_style(footer_color)
+        if not props:
+            raise ValueError("banding requires at least one color")
+        return props
+
+    def _banding_request(self, grid, header_color=None, first_band_color="#FFFFFF",
+                         second_band_color="#F3F3F3", footer_color=None, band_rows=True):
+        props = self._banding_properties(header_color, first_band_color, second_band_color, footer_color)
+        banded = {"range": grid}
+        if band_rows:
+            banded["rowProperties"] = props
+        else:
+            banded["columnProperties"] = props
+        return {"addBanding": {"bandedRange": banded}}
+
+    def add_banding(self, spreadsheet_id, range, header_color=None, first_band_color="#FFFFFF",
+                    second_band_color="#F3F3F3", footer_color=None, band_rows=True):
+        grid = self._a1_to_grid_range(spreadsheet_id, range)
+        return self._batch(spreadsheet_id, [self._banding_request(
+            grid, header_color, first_band_color, second_band_color, footer_color, band_rows,
+        )])
+
+    def update_banding(self, spreadsheet_id, banded_range_id, header_color=None, first_band_color=None,
+                       second_band_color=None, footer_color=None):
+        props = self._banding_properties(header_color, first_band_color, second_band_color, footer_color)
+        banded = {"bandedRangeId": banded_range_id, "rowProperties": props}
+        fields = ",".join(f"rowProperties.{k}" for k in props)
+        return self._batch(spreadsheet_id, [{"updateBanding": {"bandedRange": banded, "fields": fields}}])
+
+    def delete_banding(self, spreadsheet_id, banded_range_id):
+        return self._batch(spreadsheet_id, [{"deleteBanding": {"bandedRangeId": banded_range_id}}])
+
+    def _build_filter_criteria(self, spec):
+        criteria = {}
+        if spec.get("hidden_values") is not None:
+            criteria["hiddenValues"] = spec["hidden_values"]
+        condition_type = spec.get("condition_type")
+        if condition_type:
+            values = spec.get("values", [])
+            criteria["condition"] = {
+                "type": condition_type,
+                "values": [{"userEnteredValue": str(v)} for v in values],
+            }
+        return criteria
+
+    def _build_filter_specs(self, filter_specs):
+        built = []
+        for spec in filter_specs:
+            criteria = self._build_filter_criteria(spec)
+            if not criteria:
+                raise ValueError("each filter_spec needs hidden_values and/or condition_type + values")
+            built.append({"columnIndex": spec["column"], "filterCriteria": criteria})
+        return built
 
     def sort_range(self, spreadsheet_id, range, column, ascending=True):
         grid = self._a1_to_grid_range(spreadsheet_id, range)
@@ -162,12 +273,20 @@ class SheetsAPI:
             spreadsheetId=spreadsheet_id, body={"requests": [req]}
         ).execute()
 
-    def set_basic_filter(self, spreadsheet_id, range):
+    def set_basic_filter(self, spreadsheet_id, range, filter_specs=None, sort_specs=None):
         grid = self._a1_to_grid_range(spreadsheet_id, range)
-        req = {"setBasicFilter": {"filter": {"range": grid}}}
-        return self.service.spreadsheets().batchUpdate(
-            spreadsheetId=spreadsheet_id, body={"requests": [req]}
-        ).execute()
+        filt = {"range": grid}
+        if filter_specs:
+            filt["filterSpecs"] = self._build_filter_specs(filter_specs)
+        if sort_specs:
+            filt["sortSpecs"] = [
+                {
+                    "dimensionIndex": s["column"],
+                    "sortOrder": "ASCENDING" if s.get("ascending", True) else "DESCENDING",
+                }
+                for s in sort_specs
+            ]
+        return self._batch(spreadsheet_id, [{"setBasicFilter": {"filter": filt}}])
 
     def clear_basic_filter(self, spreadsheet_id, range):
         grid = self._a1_to_grid_range(spreadsheet_id, range)
@@ -249,9 +368,90 @@ class SheetsAPI:
         body = {"sourceSheetId": sheet_id}
         if new_title:
             body["newSheetName"] = new_title
-        return self.service.spreadsheets().batchUpdate(
-            spreadsheetId=spreadsheet_id, body={"requests": [{"duplicateSheet": body}]}
-        ).execute()
+        return self._batch(spreadsheet_id, [{"duplicateSheet": body}])
+
+    def add_table(self, spreadsheet_id, range, name, header_color="#355468", first_band_color="#FFFFFF",
+                  second_band_color="#F3F3F3", column_names=None):
+        grid = self._a1_to_grid_range(spreadsheet_id, range)
+        table = {
+            "name": name,
+            "range": grid,
+            "rowsProperties": {
+                "headerColorStyle": self._hex_to_color_style(header_color),
+                "firstBandColorStyle": self._hex_to_color_style(first_band_color),
+                "secondBandColorStyle": self._hex_to_color_style(second_band_color),
+            },
+        }
+        if column_names:
+            table["columnProperties"] = [
+                {"columnIndex": i, "columnName": col_name} for i, col_name in enumerate(column_names)
+            ]
+        return self._batch(spreadsheet_id, [{"addTable": {"table": table}}])
+
+    def format_table(self, spreadsheet_id, range, header_color="#355468", header_text_color="#FFFFFF",
+                     first_band_color="#FFFFFF", second_band_color="#F3F3F3", wrap=True, auto_resize_columns=True,
+                     add_filter=True, add_borders=True, freeze_header=True):
+        """Apply common table styling in a single batchUpdate: header, bands, wrap, filter, borders, sizing."""
+        meta = self.get_spreadsheet(spreadsheet_id)
+        sheet_name, sheet_id, grid, start_row, end_row, start_col, end_col = self._resolve_a1(
+            spreadsheet_id, range, meta,
+        )
+        header_grid = {**grid, "startRowIndex": start_row - 1, "endRowIndex": start_row}
+        data_start = start_row + 1
+        has_data_rows = data_start <= end_row
+        data_grid = (
+            {**grid, "startRowIndex": start_row, "endRowIndex": end_row}
+            if has_data_rows else None
+        )
+
+        requests = [
+            self._format_cells_request(
+                header_grid, bold=True, background_color=header_color,
+                text_color=header_text_color, wrap=wrap, horizontal_alignment="CENTER",
+            ),
+        ]
+        if has_data_rows:
+            requests.append(self._banding_request(
+                grid, header_color=header_color,
+                first_band_color=first_band_color, second_band_color=second_band_color,
+            ))
+            if wrap:
+                requests.append(self._format_cells_request(data_grid, wrap=True))
+        if add_filter:
+            requests.append({"setBasicFilter": {"filter": {"range": grid}}})
+        if add_borders:
+            border = {"style": "SOLID", "color": self._hex_to_color("#CCCCCC")}
+            requests.append({"updateBorders": {
+                "range": grid,
+                "top": border, "bottom": border, "left": border, "right": border,
+                "innerHorizontal": border, "innerVertical": border,
+            }})
+        if auto_resize_columns and start_col and end_col:
+            col_start = grid.get("startColumnIndex")
+            col_end = grid.get("endColumnIndex")
+            if col_start is not None and col_end is not None:
+                requests.append({"autoResizeDimensions": {
+                    "dimensions": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": col_start, "endIndex": col_end},
+                }})
+        if freeze_header:
+            requests.append({"updateSheetProperties": {
+                "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 1}},
+                "fields": "gridProperties.frozenRowCount",
+            }})
+        result = self._batch(spreadsheet_id, requests)
+        return {
+            "sheet": sheet_name,
+            "range": self._quoted_sheet_range(sheet_name, f"{start_col}{start_row}:{end_col}{end_row}"),
+            "requests_sent": len(requests),
+            "result": result,
+        }
+
+    def write_formulas(self, spreadsheet_id, range, formulas, value_input_option="USER_ENTERED"):
+        """Write formula strings (e.g. '=SUM(A2:A10)') to a range. Same as update_range with USER_ENTERED."""
+        return self.update_range(spreadsheet_id, range, formulas, value_input_option)
+
+    def read_formulas(self, spreadsheet_id, range):
+        return self.read_range(spreadsheet_id, range, value_render_option="FORMULA")
 
     def set_borders(self, spreadsheet_id, range, style="SOLID", color="#000000",
                     top=True, bottom=True, left=True, right=True, inner=False):

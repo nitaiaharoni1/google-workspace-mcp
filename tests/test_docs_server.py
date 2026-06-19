@@ -69,6 +69,66 @@ def test_replace_all_text_builds_request(monkeypatch):
     assert req["replaceText"] == "bar"
 
 
+def test_set_page_layout_a4_with_margins(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    api.set_page_layout("D1", page_preset="A4", margin_top_pt=72, margin_bottom_pt=72, margin_left_pt=72, margin_right_pt=72)
+    _, kwargs = svc.documents().batchUpdate.call_args
+    req = kwargs["body"]["requests"][0]["updateDocumentStyle"]
+    assert req["documentStyle"]["pageSize"]["width"]["magnitude"] == 595.28
+    assert req["documentStyle"]["marginTop"]["magnitude"] == 72
+    assert "pageSize" in req["fields"]
+
+
+def test_setup_header_creates_and_inserts(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    docs = MagicMock()
+    batch = MagicMock()
+    svc.documents.return_value = docs
+    docs.batchUpdate.return_value = batch
+    batch.execute.side_effect = [
+        {"replies": [{"createHeader": {"headerId": "H1"}}]},
+        {"ok": True},
+    ]
+    out = api.setup_header("D1", "Page 1")
+    assert out["headerId"] == "H1"
+    insert_call = docs.batchUpdate.call_args_list[1]
+    req = insert_call.kwargs["body"]["requests"][0]["insertText"]
+    assert req["location"]["segmentId"] == "H1"
+    assert req["text"] == "Page 1"
+
+
+def test_insert_inline_image_builds_request(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {"replies": [{"insertInlineImage": {"objectId": "IMG1"}}]}
+    api.insert_inline_image("D1", "https://example.com/chart.png", index=5, width_pt=400, height_pt=250)
+    _, kwargs = svc.documents().batchUpdate.call_args
+    req = kwargs["body"]["requests"][0]["insertInlineImage"]
+    assert req["uri"] == "https://example.com/chart.png"
+    assert req["location"]["index"] == 5
+    assert req["objectSize"]["width"]["magnitude"] == 400
+
+
+def test_update_paragraph_style_alignment(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    api.update_paragraph_style("D1", 1, 10, alignment="CENTER", space_below_pt=12)
+    _, kwargs = svc.documents().batchUpdate.call_args
+    req = kwargs["body"]["requests"][0]["updateParagraphStyle"]
+    assert req["paragraphStyle"]["alignment"] == "CENTER"
+    assert req["paragraphStyle"]["spaceBelow"]["magnitude"] == 12
+
+
+def test_insert_table_builds_request(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    api.insert_table("D1", rows=3, columns=4, index=2)
+    _, kwargs = svc.documents().batchUpdate.call_args
+    req = kwargs["body"]["requests"][0]["insertTable"]
+    assert req["rows"] == 3 and req["columns"] == 4
+    assert req["location"]["index"] == 2
+
+
 # --- server tools (mocked _api) ---
 
 @pytest.mark.anyio
@@ -83,7 +143,11 @@ async def test_read_document_envelope(monkeypatch):
 @pytest.mark.anyio
 async def test_tools_registered_and_account_param():
     tools = {t.name: t for t in await server.mcp.list_tools()}
-    for name in ["get_document", "read_document", "create_document", "append_text", "insert_text", "replace_all_text"]:
+    for name in [
+        "get_document", "read_document", "create_document", "append_text", "insert_text",
+        "replace_all_text", "format_text", "set_page_layout", "setup_header", "setup_footer",
+        "insert_inline_image", "insert_table", "update_paragraph_style",
+    ]:
         assert name in tools, f"missing tool {name}"
         assert "account" in (tools[name].inputSchema or {}).get("properties", {})
     # common tools present

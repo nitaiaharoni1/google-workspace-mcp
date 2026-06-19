@@ -292,6 +292,87 @@ class TestSheetsAPIDimensions:
             body={"requests": [{"duplicateSheet": {"sourceSheetId": 7, "newSheetName": "Copy"}}]},
         )
 
+    def test_add_banding(self, api_with_meta):
+        api, svc = api_with_meta
+        api.add_banding("sid", "Tab!A1:C10", header_color="#355468", first_band_color="#FFFFFF", second_band_color="#F3F3F3")
+        call = svc.spreadsheets().batchUpdate.call_args
+        req = call.kwargs["body"]["requests"][0]["addBanding"]["bandedRange"]
+        assert req["range"]["sheetId"] == 7
+        assert req["rowProperties"]["firstBandColorStyle"]["rgbColor"]["red"] == 1.0
+        assert req["rowProperties"]["headerColorStyle"]["rgbColor"]["blue"] == pytest.approx(0.408, abs=0.01)
+
+    def test_set_basic_filter_with_specs(self, api_with_meta):
+        api, svc = api_with_meta
+        api.set_basic_filter("sid", "Tab!A1:C10", filter_specs=[{"column": 0, "hidden_values": ["Draft"]}])
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"setBasicFilter": {"filter": {
+                "range": {"sheetId": 7, "startColumnIndex": 0, "endColumnIndex": 3, "startRowIndex": 0, "endRowIndex": 10},
+                "filterSpecs": [{"columnIndex": 0, "filterCriteria": {"hiddenValues": ["Draft"]}}],
+            }}}]},
+        )
+
+    def test_format_cells_wrap_and_vertical(self, api_with_meta):
+        api, svc = api_with_meta
+        api.format_cells("sid", "Tab!A1", wrap=True, vertical_alignment="TOP", strikethrough=True)
+        call = svc.spreadsheets().batchUpdate.call_args
+        req = call.kwargs["body"]["requests"][0]["repeatCell"]
+        fmt = req["cell"]["userEnteredFormat"]
+        assert fmt["wrapStrategy"] == "WRAP"
+        assert fmt["verticalAlignment"] == "TOP"
+        assert fmt["textFormat"]["strikethrough"] is True
+
+    def test_write_formulas(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().update.return_value.execute.return_value = {"updatedCells": 1}
+        result = api.write_formulas("sid", "A1", [["=SUM(B2:B10)"]])
+        svc.spreadsheets().values().update.assert_called_with(
+            spreadsheetId="sid", range="A1", valueInputOption="USER_ENTERED",
+            body={"values": [["=SUM(B2:B10)"]]},
+        )
+        assert result == {"updatedCells": 1}
+
+    def test_read_formulas(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["=SUM(B2:B10)"]]}
+        result = api.read_formulas("sid", "A1")
+        svc.spreadsheets().values().get.assert_called_with(
+            spreadsheetId="sid", range="A1", valueRenderOption="FORMULA",
+        )
+        assert result["values"] == [["=SUM(B2:B10)"]]
+
+    def test_format_table_batches_single_request(self, api_with_meta):
+        api, svc = api_with_meta
+        result = api.format_table("sid", "Tab!A1:C5")
+        call = svc.spreadsheets().batchUpdate.call_args
+        requests = call.kwargs["body"]["requests"]
+        assert len(requests) >= 5
+        assert requests[0]["repeatCell"]["range"]["startRowIndex"] == 0
+        assert requests[0]["repeatCell"]["range"]["endRowIndex"] == 1
+        assert any("addBanding" in r for r in requests)
+        assert any("setBasicFilter" in r for r in requests)
+        assert any("autoResizeDimensions" in r for r in requests)
+        assert result["requests_sent"] == len(requests)
+        svc.spreadsheets().get.assert_called_once()
+
+    def test_add_table(self, api_with_meta):
+        api, svc = api_with_meta
+        api.add_table("sid", "Tab!A1:C10", "MyTable", column_names=["A", "B", "C"])
+        call = svc.spreadsheets().batchUpdate.call_args
+        req = call.kwargs["body"]["requests"][0]["addTable"]["table"]
+        assert req["name"] == "MyTable"
+        assert len(req["columnProperties"]) == 3
+
+    def test_filter_spec_requires_criteria(self, api_with_meta):
+        api, _ = api_with_meta
+        with pytest.raises(ValueError, match="filter_spec"):
+            api.set_basic_filter("sid", "Tab!A1:C10", filter_specs=[{"column": 0}])
+
+    def test_invalid_hex_color(self, api_with_meta):
+        api, _ = api_with_meta
+        with pytest.raises(ValueError, match="invalid hex"):
+            api.format_cells("sid", "Tab!A1", background_color="not-a-color")
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # (b) Server integration tests — monkeypatch _api
@@ -330,6 +411,9 @@ async def test_list_tools_includes_expected(patched_server):
         "resize_columns", "resize_rows", "freeze_panes",
         "insert_rows", "insert_columns", "delete_rows", "delete_columns",
         "set_borders", "set_data_validation", "duplicate_sheet",
+        "format_cells", "sort_range", "set_basic_filter", "clear_basic_filter",
+        "merge_cells", "unmerge_cells", "add_banding", "update_banding", "delete_banding",
+        "add_table", "format_table", "read_formulas", "write_formulas",
         # common tools
         "list_accounts", "auth_status", "whoami",
     }

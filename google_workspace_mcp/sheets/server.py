@@ -5,7 +5,7 @@ from .sheets_api import SheetsAPI
 
 mcp = build_server(
     "gsheets-mcp",
-    "Google Sheets: read and write cell values and manage spreadsheet structure for one or more accounts. Ranges use A1 notation.",
+    "Google Sheets: read/write values, formulas, filters, and table formatting (banding, wrap, column sizing) for one or more accounts. Ranges use A1 notation.",
 )
 
 
@@ -110,10 +110,10 @@ def delete_sheet(account: str | None = None, spreadsheet_id: str = "", sheet_id:
 # --- FORMATTING / STRUCTURE (mutating) tools ---
 
 @register(mcp, mutating=True)
-def format_cells(account: str | None = None, spreadsheet_id: str = "", range: str = "", bold: bool | None = None, italic: bool | None = None, font_size: int | None = None, text_color: str | None = None, background_color: str | None = None, number_format: str | None = None, horizontal_alignment: str | None = None, wrap: bool | None = None) -> dict:
-    """Apply formatting to a range (A1 notation). Colors are hex (e.g. '#FF0000'); horizontal_alignment is LEFT/CENTER/RIGHT."""
+def format_cells(account: str | None = None, spreadsheet_id: str = "", range: str = "", bold: bool | None = None, italic: bool | None = None, strikethrough: bool | None = None, underline: bool | None = None, font_size: int | None = None, text_color: str | None = None, background_color: str | None = None, number_format: str | None = None, horizontal_alignment: str | None = None, vertical_alignment: str | None = None, wrap: bool | None = None) -> dict:
+    """Apply formatting to a range (A1 notation). Colors are hex (e.g. '#FF0000'); horizontal_alignment is LEFT/CENTER/RIGHT; vertical_alignment is TOP/MIDDLE/BOTTOM; wrap=True enables text wrap."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.format_cells(spreadsheet_id, range, bold, italic, font_size, text_color, background_color, number_format, horizontal_alignment, wrap))
+    data = run_tool(lambda: api.format_cells(spreadsheet_id, range, bold, italic, strikethrough, underline, font_size, text_color, background_color, number_format, horizontal_alignment, vertical_alignment, wrap))
     return ok(resolved, data)
 
 
@@ -126,10 +126,10 @@ def sort_range(account: str | None = None, spreadsheet_id: str = "", range: str 
 
 
 @register(mcp, mutating=True)
-def set_basic_filter(account: str | None = None, spreadsheet_id: str = "", range: str = "") -> dict:
-    """Set a basic filter over a range (A1 notation)."""
+def set_basic_filter(account: str | None = None, spreadsheet_id: str = "", range: str = "", filter_specs: list[dict] | None = None, sort_specs: list[dict] | None = None) -> dict:
+    """Set a basic filter over a range (A1 notation). filter_specs: [{column: 0, hidden_values: ['x']}] or [{column: 1, condition_type: 'TEXT_CONTAINS', values: ['foo']}]. sort_specs: [{column: 0, ascending: true}]."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.set_basic_filter(spreadsheet_id, range))
+    data = run_tool(lambda: api.set_basic_filter(spreadsheet_id, range, filter_specs, sort_specs))
     return ok(resolved, data)
 
 
@@ -234,6 +234,62 @@ def duplicate_sheet(account: str | None = None, spreadsheet_id: str = "", sheet_
     """Duplicate a sheet (tab) by its numeric sheet ID, optionally giving the copy a new title."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.duplicate_sheet(spreadsheet_id, sheet_id, new_title))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def add_banding(account: str | None = None, spreadsheet_id: str = "", range: str = "", header_color: str | None = None, first_band_color: str = "#FFFFFF", second_band_color: str = "#F3F3F3", footer_color: str | None = None, band_rows: bool = True) -> dict:
+    """Add alternating row (or column) colors to a range. header_color styles the first row; first/second_band_color alternate thereafter."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.add_banding(spreadsheet_id, range, header_color, first_band_color, second_band_color, footer_color, band_rows))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def update_banding(account: str | None = None, spreadsheet_id: str = "", banded_range_id: int = 0, header_color: str | None = None, first_band_color: str | None = None, second_band_color: str | None = None, footer_color: str | None = None) -> dict:
+    """Update colors on an existing banded range by bandedRangeId."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.update_banding(spreadsheet_id, banded_range_id, header_color, first_band_color, second_band_color, footer_color))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True, destructive=True)
+def delete_banding(account: str | None = None, spreadsheet_id: str = "", banded_range_id: int = 0) -> dict:
+    """Remove a banded (alternating color) range by its bandedRangeId (from get_spreadsheet or add_banding response)."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.delete_banding(spreadsheet_id, banded_range_id))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def add_table(account: str | None = None, spreadsheet_id: str = "", range: str = "", name: str = "", header_color: str = "#355468", first_band_color: str = "#FFFFFF", second_band_color: str = "#F3F3F3", column_names: list[str] | None = None) -> dict:
+    """Create a native Google Sheets table with header and alternating row colors. column_names sets header labels by column index."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.add_table(spreadsheet_id, range, name, header_color, first_band_color, second_band_color, column_names))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def format_table(account: str | None = None, spreadsheet_id: str = "", range: str = "", header_color: str = "#355468", header_text_color: str = "#FFFFFF", first_band_color: str = "#FFFFFF", second_band_color: str = "#F3F3F3", wrap: bool = True, auto_resize_columns: bool = True, add_filter: bool = True, add_borders: bool = True, freeze_header: bool = True) -> dict:
+    """One-shot table styling: formatted header, alternating row colors, text wrap, auto column width, filter dropdowns, borders, and frozen header row."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.format_table(spreadsheet_id, range, header_color, header_text_color, first_band_color, second_band_color, wrap, auto_resize_columns, add_filter, add_borders, freeze_header))
+    return ok(resolved, data)
+
+
+@register(mcp)
+def read_formulas(account: str | None = None, spreadsheet_id: str = "", range: str = "") -> dict:
+    """Read formula strings from a range (A1 notation), e.g. '=SUM(A2:A10)'."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.read_formulas(spreadsheet_id, range))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def write_formulas(account: str | None = None, spreadsheet_id: str = "", range: str = "", formulas: list[list] | None = None) -> dict:
+    """Write formula strings to a range (A1 notation). Pass 2D array with '=' prefixes, e.g. [['=SUM(A2:A10)', '=A2*B2']]."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.write_formulas(spreadsheet_id, range, formulas or []))
     return ok(resolved, data)
 
 
