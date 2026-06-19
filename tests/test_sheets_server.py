@@ -563,3 +563,34 @@ async def test_get_spreadsheet_tool(patched_server):
     result = _parse_result(raw)
     assert result["ok"] is True
     assert result["data"]["spreadsheetId"] == "sid"
+
+
+class TestSheetsChartExport:
+    def test_get_chart_image_url(self):
+        url = SheetsAPI.get_chart_image_url("abc123", 999)
+        assert url == "https://docs.google.com/spreadsheets/d/abc123/chart?oid=999&format=image"
+
+    def test_fetch_chart_image_bytes(self, sheets_api):
+        api, _svc = sheets_api
+        creds = MagicMock()
+        creds.expired = False
+        creds.token = "tok"
+
+        class FakeResp:
+            def read(self):
+                return b"PNGDATA"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        with patch("google_auth_core.get_credentials", return_value=(creds, None)), \
+             patch("urllib.request.urlopen", return_value=FakeResp()) as urlopen:
+            data = api.fetch_chart_image_bytes("sid", 42)
+
+        assert data == b"PNGDATA"
+        req = urlopen.call_args[0][0]
+        assert req.get_header("Authorization") == "Bearer tok"
+        assert "sid" in req.full_url and "oid=42" in req.full_url

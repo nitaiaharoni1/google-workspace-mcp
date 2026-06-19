@@ -394,6 +394,33 @@ async def test_read_document_envelope(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_get_content_map_envelope(monkeypatch):
+    fake = SimpleNamespace(
+        get_content_map=lambda doc_id, include_headers_footers=True: {
+            "documentId": doc_id, "elements": [],
+        },
+    )
+    monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
+    env = envelope(await server.mcp.call_tool("get_content_map", {"document_id": "D1"}))
+    assert env["ok"] is True
+    assert env["data"]["documentId"] == "D1"
+
+
+@pytest.mark.anyio
+async def test_populate_table_envelope(monkeypatch):
+    fake = SimpleNamespace(
+        populate_table=lambda doc_id, table_start_index, rows, segment_id=None: {"filled": len(rows)},
+    )
+    monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
+    env = envelope(await server.mcp.call_tool(
+        "populate_table",
+        {"document_id": "D1", "table_start_index": 2, "rows": [["A", "B"]]},
+    ))
+    assert env["ok"] is True
+    assert env["data"]["filled"] == 1
+
+
+@pytest.mark.anyio
 async def test_tools_registered_and_account_param():
     tools = {t.name: t for t in await server.mcp.list_tools()}
     docs_tools = [

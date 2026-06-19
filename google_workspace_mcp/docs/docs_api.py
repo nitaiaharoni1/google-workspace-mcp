@@ -551,9 +551,9 @@ class DocsAPI:
     def insert_page_number(self, document_id, footer_id, index=0):
         """Insert a dynamic page number field into a footer segment.
 
-        Uses the insertPageNumber batchUpdate request. Requires an existing footer
-        (create_footer / setup_footer). Not listed in all API reference snapshots;
-        if the API rejects the request, add page numbers via the Docs UI template instead.
+        Note: the public Google Docs API currently rejects ``insertPageNumber``
+        (400 Unknown name). Kept for forward compatibility; use the Docs UI or
+        a template with page numbers pre-configured until Google exposes this request.
         """
         location = {"segmentId": footer_id, "index": index}
         return self._batch(document_id, [{"insertPageNumber": {"location": location}}])

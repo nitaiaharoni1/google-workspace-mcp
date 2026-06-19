@@ -122,6 +122,26 @@ def test_mutating_tools_present_by_default():
     assert out.stdout.strip() == "(True, True)"
 
 
+@pytest.mark.parametrize(
+    "pkg,read_tool,write_tool",
+    [
+        ("docs", "read_document", "create_document"),
+        ("drive", "list_files", "upload_file"),
+    ],
+)
+def test_readonly_gate_hides_mutating_tools_docs_drive(pkg, read_tool, write_tool):
+    code = (
+        f"import asyncio\n"
+        f"from google_workspace_mcp.{pkg} import server\n"
+        f"names = [t.name for t in asyncio.run(server.mcp.list_tools())]\n"
+        f"print(({write_tool!r} in names, {read_tool!r} in names))\n"
+    )
+    env = {**os.environ, "GOOGLE_MCP_READONLY": "1"}
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "(False, True)"
+
+
 # --- alignment: every server exposes the common tools ------------------------
 
 @pytest.mark.anyio
