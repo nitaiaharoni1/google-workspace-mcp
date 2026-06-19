@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "google-workspace-mcp"
-version = "0.2.1"
-description = "Aligned MCP servers for Gmail, Calendar, and Sheets with persistent, multi-account auth"
+version = "0.3.0"
+description = "Aligned MCP servers for Gmail, Calendar, Sheets, Docs, and Drive with persistent, multi-account auth"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Nitai Aharoni" }]
@@ -25,6 +25,7 @@ gmail-mcp = "google_workspace_mcp.gmail.server:main"
 gcal-mcp = "google_workspace_mcp.calendar.server:main"
 gsheets-mcp = "google_workspace_mcp.sheets.server:main"
 gdocs-mcp = "google_workspace_mcp.docs.server:main"
+gdrive-mcp = "google_workspace_mcp.drive.server:main"
 
 [tool.setuptools.packages.find]
 include = ["google_workspace_mcp*"]

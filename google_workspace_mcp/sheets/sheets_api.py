@@ -1,6 +1,8 @@
 """Minimal Google Sheets API wrapper (values + structure operations)."""
 from __future__ import annotations
+
 import google_auth_core as core
+from google.auth.transport.requests import Request as GoogleAuthRequest
 
 
 class SheetsAPI:
@@ -452,6 +454,31 @@ class SheetsAPI:
 
     def read_formulas(self, spreadsheet_id, range):
         return self.read_range(spreadsheet_id, range, value_render_option="FORMULA")
+
+    # --- chart export (for Docs insert_sheets_chart) ---
+
+    @staticmethod
+    def get_chart_image_url(spreadsheet_id, chart_id):
+        """Return the authenticated chart export URL (PNG). Requires sign-in when fetched."""
+        return (
+            f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
+            f"/chart?oid={chart_id}&format=image"
+        )
+
+    def fetch_chart_image_bytes(self, spreadsheet_id, chart_id):
+        """Download chart PNG bytes using the authenticated account."""
+        url = self.get_chart_image_url(spreadsheet_id, chart_id)
+        creds, _ = core.get_credentials(self.account, service_name="sheets")
+        if creds.expired and creds.refresh_token:
+            creds.refresh(GoogleAuthRequest())
+        import urllib.request
+
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {creds.token}"})
+        with urllib.request.urlopen(req) as resp:
+            data = resp.read()
+        if not data:
+            raise ValueError(f"empty chart image response for chart_id={chart_id!r}")
+        return data
 
     def set_borders(self, spreadsheet_id, range, style="SOLID", color="#000000",
                     top=True, bottom=True, left=True, right=True, inner=False):

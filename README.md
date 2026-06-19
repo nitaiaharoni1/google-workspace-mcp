@@ -1,7 +1,7 @@
 # google-workspace-mcp
 
-Three aligned MCP servers for Google Workspace: **Gmail**, **Calendar**, and
-**Sheets**. They share one credential store and one runtime core, so they behave
+Five aligned MCP servers for Google Workspace: **Gmail**, **Calendar**,
+**Sheets**, **Docs**, and **Drive**. They share one credential store and one runtime core, so they behave
 identically and support:
 
 - **Persistent auth**: log in once; tokens are reused and access tokens refresh
@@ -10,7 +10,8 @@ identically and support:
   (email or alias). Calls for different accounts use separate, cached clients and
   never interfere.
 - **Many operations**: ~36 Gmail tools, ~22 Calendar tools, ~11 Sheets tools,
-  plus shared `list_accounts` / `whoami` / `auth_status` on every server.
+  ~25 Docs tools, ~16 Drive tools, plus shared `list_accounts` / `whoami` /
+  `auth_status` on every server.
 
 ## Architecture
 
@@ -24,6 +25,8 @@ google_workspace_mcp/
   gmail/     wraps gmail_cli.api.GmailAPI            -> gmail-mcp
   calendar/  wraps google_calendar_cli.api.CalendarAPI -> gcal-mcp
   sheets/    SheetsAPI (Sheets API v4)               -> gsheets-mcp
+  docs/      DocsAPI (Docs API v1)                   -> gdocs-mcp
+  drive/     DriveAPI (Drive API v3)                 -> gdrive-mcp
 ```
 
 Every tool: takes `account`, resolves it, gets a cached per-account client,
@@ -48,7 +51,7 @@ google-auth login you@personal.com     # add more accounts
 google-auth list                       # show accounts, default, aliases
 ```
 
-A single login grants Gmail + Calendar + Sheets scopes, shared by both the CLIs
+A single login grants Gmail + Calendar + Sheets + Docs + Drive scopes, shared by both the CLIs
 and the MCP servers.
 
 ## Register with Claude
@@ -60,7 +63,9 @@ and the MCP servers.
   "mcpServers": {
     "google-gmail":    { "command": "gmail-mcp" },
     "google-calendar": { "command": "gcal-mcp" },
-    "google-sheets":   { "command": "gsheets-mcp" }
+    "google-sheets":   { "command": "gsheets-mcp" },
+    "google-docs":     { "command": "gdocs-mcp" },
+    "google-drive":    { "command": "gdrive-mcp" }
   }
 }
 ```
@@ -99,6 +104,6 @@ GOOGLE_MCP_LIVE=1 pytest   # opt-in live smoke tests (needs a real test account)
 - Auth is out-of-band: servers are non-interactive token consumers. If a token
   is missing or scope-short, a tool returns an actionable error
   (`Run: google-auth login <account>`) instead of blocking the protocol.
-- The three servers are packaged as one distribution with three console-script
-  entry points (a single `pip install`), rather than three separate packages.
+- The five servers are packaged as one distribution with five console-script
+  entry points (a single `pip install`), rather than five separate packages.
   Alignment comes from the shared `core`, not from separate packaging.

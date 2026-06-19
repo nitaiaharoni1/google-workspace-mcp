@@ -4,7 +4,7 @@
   requirement: parallel accounts must never interfere),
 * persistence (credentials load from disk on "restart"; no interactive flow),
 * the read-only gate (mutating tools disappear from every server),
-* all three servers expose the aligned common tools.
+* all five servers expose the aligned common tools.
 """
 
 import asyncio
@@ -129,7 +129,9 @@ async def test_all_servers_expose_common_tools():
     from google_workspace_mcp.gmail import server as g
     from google_workspace_mcp.calendar import server as c
     from google_workspace_mcp.sheets import server as s
+    from google_workspace_mcp.docs import server as d
+    from google_workspace_mcp.drive import server as dr
 
-    for mod in (g, c, s):
+    for mod in (g, c, s, d, dr):
         names = {t.name for t in await mod.mcp.list_tools()}
         assert {"list_accounts", "whoami", "auth_status"}.issubset(names)

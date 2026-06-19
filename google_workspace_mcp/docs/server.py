@@ -1,6 +1,8 @@
 """Google Docs MCP server: create, read, and edit documents for one or more accounts."""
 from __future__ import annotations
 
+import json
+
 from ..core import build_server, register, get_api, run_tool, ok
 from .docs_api import DocsAPI
 
@@ -27,6 +29,14 @@ def read_document(account: str | None = None, document_id: str = "") -> dict:
     """Read a document's plain text (paragraphs and table cells)."""
     api, resolved = _api(account)
     return ok(resolved, run_tool(lambda: api.get_document_text(document_id)))
+
+
+@register(mcp)
+def get_content_map(account: str | None = None, document_id: str = "", include_headers_footers: bool = True) -> dict:
+    """Return a structured index map of document elements (paragraphs, tables, indices, text previews)."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.get_content_map(document_id, include_headers_footers))
+    return ok(resolved, data)
 
 
 # --- write ---
@@ -76,10 +86,10 @@ def set_paragraph_style(account: str | None = None, document_id: str = "", start
 
 
 @register(mcp, mutating=True)
-def update_paragraph_style(account: str | None = None, document_id: str = "", start_index: int = 1, end_index: int = 1, named_style_type: str | None = None, alignment: str | None = None, indent_start_pt: float | None = None, indent_end_pt: float | None = None, space_above_pt: float | None = None, space_below_pt: float | None = None, segment_id: str | None = None) -> dict:
-    """Apply paragraph formatting: alignment (START/CENTER/END/JUSTIFIED), indents/spacing in PT, named style type."""
+def update_paragraph_style(account: str | None = None, document_id: str = "", start_index: int = 1, end_index: int = 1, named_style_type: str | None = None, alignment: str | None = None, indent_start_pt: float | None = None, indent_end_pt: float | None = None, space_above_pt: float | None = None, space_below_pt: float | None = None, line_spacing: float | None = None, line_spacing_mode: str | None = None, segment_id: str | None = None) -> dict:
+    """Apply paragraph formatting: alignment, indents/spacing in PT, line_spacing (100=normal), line_spacing_mode (AT_LEAST/EXACTLY/MULTIPLE), named style type."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.update_paragraph_style(document_id, start_index, end_index, named_style_type, alignment, indent_start_pt, indent_end_pt, space_above_pt, space_below_pt, segment_id))
+    data = run_tool(lambda: api.update_paragraph_style(document_id, start_index, end_index, named_style_type, alignment, indent_start_pt, indent_end_pt, space_above_pt, space_below_pt, line_spacing, line_spacing_mode, segment_id))
     return ok(resolved, data)
 
 
@@ -168,6 +178,69 @@ def insert_bullets(account: str | None = None, document_id: str = "", start_inde
     """Turn the paragraphs in a range into a bulleted/numbered list (e.g. BULLET_DISC_CIRCLE_SQUARE, NUMBERED_DECIMAL_ALPHA_ROMAN)."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.insert_bullets(document_id, start_index, end_index, bullet_preset, segment_id))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def insert_numbered_list(account: str | None = None, document_id: str = "", start_index: int = 1, end_index: int = 1, preset: str = "NUMBERED_DECIMAL_ALPHA_ROMAN", segment_id: str | None = None) -> dict:
+    """Apply numbered list formatting. Presets: NUMBERED_DECIMAL_ALPHA_ROMAN, NUMBERED_DECIMAL_ALPHA_ROMAN_PARENS, NUMBERED_DECIMAL_NESTED, NUMBERED_UPPERALPHA_ALPHA_ROMAN, NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL, NUMBERED_ZERODECIMAL_ALPHA_ROMAN."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.insert_numbered_list(document_id, start_index, end_index, preset, segment_id))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def populate_table(account: str | None = None, document_id: str = "", table_start_index: int = 1, rows: list[list[str]] | None = None, segment_id: str | None = None) -> dict:
+    """Fill table cells with text. Use get_content_map to find table_start_index and dimensions."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.populate_table(document_id, table_start_index, rows or [], segment_id))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def merge_table_cells(account: str | None = None, document_id: str = "", table_start_index: int = 1, row: int = 0, column: int = 0, row_span: int = 1, column_span: int = 1, segment_id: str | None = None) -> dict:
+    """Merge a rectangular range of table cells."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.merge_table_cells(document_id, table_start_index, row, column, row_span, column_span, segment_id))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def format_table_cells(account: str | None = None, document_id: str = "", table_start_index: int = 1, row: int = 0, column: int = 0, row_span: int = 1, column_span: int = 1, background_color: str | None = None, border_color: str | None = None, border_width_pt: float | None = None, segment_id: str | None = None) -> dict:
+    """Style table cells: hex background_color, border_color, border_width_pt."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.format_table_cells(document_id, table_start_index, row, column, row_span, column_span, background_color, border_color, border_width_pt, segment_id))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def insert_page_number(account: str | None = None, document_id: str = "", footer_id: str = "", index: int = 0) -> dict:
+    """Insert a dynamic page number into an existing footer (footer_id from setup_footer/create_footer)."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.insert_page_number(document_id, footer_id, index))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def batch_update(account: str | None = None, document_id: str = "", requests: list[dict] | str | None = None) -> dict:
+    """Execute raw Docs batchUpdate requests. Pass a list of request dicts or a JSON string."""
+    api, resolved = _api(account)
+
+    def _call():
+        raw = requests
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        return api.batch_update(document_id, raw)
+
+    data = run_tool(_call)
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def insert_sheets_chart(account: str | None = None, document_id: str = "", spreadsheet_id: str = "", chart_id: int = 0, index: int = 1, width_pt: float = 468, height_pt: float = 280) -> dict:
+    """Export a Google Sheets chart as PNG and insert it into the document."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.insert_sheets_chart(document_id, spreadsheet_id, chart_id, index, width_pt, height_pt, account=resolved))
     return ok(resolved, data)
 
 

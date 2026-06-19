@@ -231,6 +231,157 @@ def test_delete_header_builds_request(monkeypatch):
     assert req["headerId"] == "H1"
 
 
+def test_get_content_map_body_and_table(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().get().execute.return_value = {
+        "title": "Map",
+        "body": {"content": [
+            {"startIndex": 1, "endIndex": 8, "paragraph": {
+                "elements": [{"textRun": {"content": "Hello\n"}}],
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            }},
+            {"startIndex": 8, "endIndex": 40, "table": {
+                "rows": 1,
+                "columns": 2,
+                "tableRows": [{"tableCells": [
+                    {"content": [{"startIndex": 10, "endIndex": 12, "paragraph": {
+                        "elements": [{"textRun": {"content": "\n"}}],
+                    }}]},
+                    {"content": [{"startIndex": 15, "endIndex": 17, "paragraph": {
+                        "elements": [{"textRun": {"content": "\n"}}],
+                    }}]},
+                ]}],
+            }},
+        ]},
+        "footers": {"F1": {"content": [
+            {"startIndex": 1, "endIndex": 3, "paragraph": {"elements": [{"textRun": {"content": "\n"}}]}},
+        ]}},
+    }
+    out = api.get_content_map("D1")
+    assert out["title"] == "Map"
+    assert out["elements"][0]["type"] == "paragraph"
+    assert out["elements"][0]["textPreview"] == "Hello"
+    table_el = out["elements"][1]
+    assert table_el["type"] == "table"
+    assert table_el["rows"] == 1 and table_el["columns"] == 2
+    assert len(table_el["cells"]) == 2
+    assert out["elements"][-1]["segmentType"] == "footer"
+
+
+def test_populate_table_inserts_reverse_order(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().get().execute.return_value = {
+        "body": {"content": [{
+            "startIndex": 2,
+            "table": {
+                "tableRows": [{"tableCells": [
+                    {"content": [{"startIndex": 5, "paragraph": {"elements": []}}]},
+                    {"content": [{"startIndex": 8, "paragraph": {"elements": []}}]},
+                ]}],
+            },
+        }]},
+    }
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    api.populate_table("D1", 2, [["A", "B"]])
+    _, kwargs = svc.documents().batchUpdate.call_args
+    reqs = kwargs["body"]["requests"]
+    assert len(reqs) == 2
+    assert reqs[0]["insertText"]["location"]["index"] == 8
+    assert reqs[0]["insertText"]["text"] == "B"
+    assert reqs[1]["insertText"]["text"] == "A"
+
+
+def test_merge_table_cells_builds_request(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    api.merge_table_cells("D1", 2, row=0, column=0, row_span=2, column_span=1)
+    _, kwargs = svc.documents().batchUpdate.call_args
+    req = kwargs["body"]["requests"][0]["mergeTableCells"]
+    tr = req["tableRange"]
+    assert tr["tableCellLocation"]["tableStartLocation"]["index"] == 2
+    assert tr["rowSpan"] == 2 and tr["columnSpan"] == 1
+
+
+def test_format_table_cells_builds_request(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    api.format_table_cells("D1", 2, 0, 0, background_color="#FF0000", border_color="#000000", border_width_pt=1)
+    _, kwargs = svc.documents().batchUpdate.call_args
+    req = kwargs["body"]["requests"][0]["updateTableCellStyle"]
+    assert "backgroundColor" in req["fields"]
+    assert "borderTop" in req["fields"]
+    assert req["tableCellStyle"]["borderTop"]["width"]["magnitude"] == 1
+
+
+def test_insert_page_number_builds_request(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    api.insert_page_number("D1", "F1", index=0)
+    _, kwargs = svc.documents().batchUpdate.call_args
+    req = kwargs["body"]["requests"][0]["insertPageNumber"]
+    assert req["location"]["segmentId"] == "F1"
+    assert req["location"]["index"] == 0
+
+
+def test_update_paragraph_style_line_spacing(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    api.update_paragraph_style("D1", 1, 10, line_spacing=150, line_spacing_mode="MULTIPLE")
+    _, kwargs = svc.documents().batchUpdate.call_args
+    req = kwargs["body"]["requests"][0]["updateParagraphStyle"]
+    assert req["paragraphStyle"]["lineSpacing"] == 150
+    assert req["paragraphStyle"]["spacingMode"] == "MULTIPLE"
+
+
+def test_insert_numbered_list_builds_request(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    api.insert_numbered_list("D1", 1, 20, preset="NUMBERED_DECIMAL_NESTED")
+    _, kwargs = svc.documents().batchUpdate.call_args
+    req = kwargs["body"]["requests"][0]["createParagraphBullets"]
+    assert req["bulletPreset"] == "NUMBERED_DECIMAL_NESTED"
+
+
+def test_batch_update_passthrough(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    payload = [{"insertText": {"location": {"index": 1}, "text": "x"}}]
+    api.batch_update("D1", payload)
+    _, kwargs = svc.documents().batchUpdate.call_args
+    assert kwargs["body"]["requests"] == payload
+
+
+def test_batch_update_rejects_empty(monkeypatch):
+    api, _svc = _api_with_mock(monkeypatch)
+    with pytest.raises(ValueError, match="non-empty"):
+        api.batch_update("D1", [])
+
+
+def test_insert_sheets_chart_pipeline(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    monkeypatch.setattr(
+        "google_workspace_mcp.sheets.sheets_api.SheetsAPI.fetch_chart_image_bytes",
+        lambda self, sid, cid: b"PNG",
+    )
+    drive = MagicMock()
+    monkeypatch.setattr("google_auth_core.get_service", lambda name, ver, account=None: drive if name == "drive" else svc)
+    drive.files().create().execute.return_value = {"id": "FILE1"}
+    drive.permissions().create().execute.return_value = {"id": "perm"}
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    out = api.insert_sheets_chart("D1", "SHEET1", 123, index=5)
+    assert "drive.google.com" in out["imageUri"]
+    _, kwargs = svc.documents().batchUpdate.call_args
+    req = kwargs["body"]["requests"][0]["insertInlineImage"]
+    assert req["location"]["index"] == 5
+    assert "FILE1" in req["uri"]
+
+
+def test_get_chart_image_url():
+    from google_workspace_mcp.sheets.sheets_api import SheetsAPI
+    url = SheetsAPI.get_chart_image_url("abc", 999)
+    assert url == "https://docs.google.com/spreadsheets/d/abc/chart?oid=999&format=image"
+
+
 # --- server tools (mocked _api) ---
 
 @pytest.mark.anyio
@@ -246,12 +397,13 @@ async def test_read_document_envelope(monkeypatch):
 async def test_tools_registered_and_account_param():
     tools = {t.name: t for t in await server.mcp.list_tools()}
     docs_tools = [
-        "get_document", "read_document", "create_document", "append_text", "insert_text",
+        "get_document", "read_document", "get_content_map", "create_document", "append_text", "insert_text",
         "replace_all_text", "format_text", "set_paragraph_style", "update_paragraph_style",
         "set_page_layout", "flip_page_orientation", "setup_header", "setup_footer",
         "create_header", "create_footer", "delete_header", "delete_footer",
-        "insert_inline_image", "insert_chart_image", "insert_table", "insert_page_break",
-        "insert_bullets", "remove_bullets", "delete_range",
+        "insert_inline_image", "insert_chart_image", "insert_sheets_chart", "insert_table", "insert_page_break",
+        "insert_bullets", "insert_numbered_list", "populate_table", "merge_table_cells", "format_table_cells",
+        "insert_page_number", "batch_update", "remove_bullets", "delete_range",
     ]
     for name in docs_tools:
         assert name in tools, f"missing tool {name}"
