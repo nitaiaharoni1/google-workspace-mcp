@@ -80,6 +80,38 @@ def test_set_page_layout_a4_with_margins(monkeypatch):
     assert "pageSize" in req["fields"]
 
 
+def test_flip_page_orientation(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    api.flip_page_orientation("D1", flip=True)
+    _, kwargs = svc.documents().batchUpdate.call_args
+    req = kwargs["body"]["requests"][0]["updateDocumentStyle"]
+    assert req["documentStyle"]["flipPageOrientation"] is True
+    assert "flipPageOrientation" in req["fields"]
+
+
+def test_format_text_builds_request(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    api.format_text(
+        "D1", 1, 10, bold=True, italic=True, underline=True, strikethrough=True,
+        font_size=14, font_family="Arial", link_url="https://example.com",
+        foreground_color="#FF0000", background_color="#00FF00",
+    )
+    _, kwargs = svc.documents().batchUpdate.call_args
+    req = kwargs["body"]["requests"][0]["updateTextStyle"]
+    style = req["textStyle"]
+    assert style["bold"] is True
+    assert style["italic"] is True
+    assert style["underline"] is True
+    assert style["strikethrough"] is True
+    assert style["fontSize"]["magnitude"] == 14
+    assert style["weightedFontFamily"]["fontFamily"] == "Arial"
+    assert style["link"]["url"] == "https://example.com"
+    assert style["foregroundColor"]["color"]["rgbColor"]["red"] == 1.0
+    assert style["backgroundColor"]["color"]["rgbColor"]["green"] == 1.0
+
+
 def test_setup_header_creates_and_inserts(monkeypatch):
     api, svc = _api_with_mock(monkeypatch)
     docs = MagicMock()
@@ -98,6 +130,24 @@ def test_setup_header_creates_and_inserts(monkeypatch):
     assert req["text"] == "Page 1"
 
 
+def test_setup_footer_creates_and_inserts(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    docs = MagicMock()
+    batch = MagicMock()
+    svc.documents.return_value = docs
+    docs.batchUpdate.return_value = batch
+    batch.execute.side_effect = [
+        {"replies": [{"createFooter": {"footerId": "F1"}}]},
+        {"ok": True},
+    ]
+    out = api.setup_footer("D1", "Page 1")
+    assert out["footerId"] == "F1"
+    insert_call = docs.batchUpdate.call_args_list[1]
+    req = insert_call.kwargs["body"]["requests"][0]["insertText"]
+    assert req["location"]["segmentId"] == "F1"
+    assert req["text"] == "Page 1"
+
+
 def test_insert_inline_image_builds_request(monkeypatch):
     api, svc = _api_with_mock(monkeypatch)
     svc.documents().batchUpdate().execute.return_value = {"replies": [{"insertInlineImage": {"objectId": "IMG1"}}]}
@@ -107,6 +157,17 @@ def test_insert_inline_image_builds_request(monkeypatch):
     assert req["uri"] == "https://example.com/chart.png"
     assert req["location"]["index"] == 5
     assert req["objectSize"]["width"]["magnitude"] == 400
+
+
+def test_insert_chart_image_uses_defaults(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    api.insert_chart_image("D1", "https://example.com/chart.png", index=3)
+    _, kwargs = svc.documents().batchUpdate.call_args
+    req = kwargs["body"]["requests"][0]["insertInlineImage"]
+    assert req["uri"] == "https://example.com/chart.png"
+    assert req["objectSize"]["width"]["magnitude"] == 468
+    assert req["objectSize"]["height"]["magnitude"] == 280
 
 
 def test_update_paragraph_style_alignment(monkeypatch):
@@ -129,6 +190,47 @@ def test_insert_table_builds_request(monkeypatch):
     assert req["location"]["index"] == 2
 
 
+def test_insert_page_break_with_segment(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    api.insert_page_break("D1", index=1, segment_id="H1")
+    _, kwargs = svc.documents().batchUpdate.call_args
+    req = kwargs["body"]["requests"][0]["insertPageBreak"]
+    assert req["location"]["index"] == 1
+    assert req["location"]["segmentId"] == "H1"
+
+
+def test_insert_bullets_builds_request(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    api.insert_bullets("D1", 1, 20, bullet_preset="NUMBERED_DECIMAL_ALPHA_ROMAN", segment_id="H1")
+    _, kwargs = svc.documents().batchUpdate.call_args
+    req = kwargs["body"]["requests"][0]["createParagraphBullets"]
+    assert req["range"]["startIndex"] == 1
+    assert req["range"]["endIndex"] == 20
+    assert req["range"]["segmentId"] == "H1"
+    assert req["bulletPreset"] == "NUMBERED_DECIMAL_ALPHA_ROMAN"
+
+
+def test_remove_bullets_builds_request(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    api.remove_bullets("D1", 1, 20)
+    _, kwargs = svc.documents().batchUpdate.call_args
+    req = kwargs["body"]["requests"][0]["deleteParagraphBullets"]
+    assert req["range"]["startIndex"] == 1
+    assert req["range"]["endIndex"] == 20
+
+
+def test_delete_header_builds_request(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {"ok": True}
+    api.delete_header("D1", "H1")
+    _, kwargs = svc.documents().batchUpdate.call_args
+    req = kwargs["body"]["requests"][0]["deleteHeader"]
+    assert req["headerId"] == "H1"
+
+
 # --- server tools (mocked _api) ---
 
 @pytest.mark.anyio
@@ -143,11 +245,15 @@ async def test_read_document_envelope(monkeypatch):
 @pytest.mark.anyio
 async def test_tools_registered_and_account_param():
     tools = {t.name: t for t in await server.mcp.list_tools()}
-    for name in [
+    docs_tools = [
         "get_document", "read_document", "create_document", "append_text", "insert_text",
-        "replace_all_text", "format_text", "set_page_layout", "setup_header", "setup_footer",
-        "insert_inline_image", "insert_table", "update_paragraph_style",
-    ]:
+        "replace_all_text", "format_text", "set_paragraph_style", "update_paragraph_style",
+        "set_page_layout", "flip_page_orientation", "setup_header", "setup_footer",
+        "create_header", "create_footer", "delete_header", "delete_footer",
+        "insert_inline_image", "insert_chart_image", "insert_table", "insert_page_break",
+        "insert_bullets", "remove_bullets", "delete_range",
+    ]
+    for name in docs_tools:
         assert name in tools, f"missing tool {name}"
         assert "account" in (tools[name].inputSchema or {}).get("properties", {})
     # common tools present

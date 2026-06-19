@@ -92,6 +92,14 @@ def set_page_layout(account: str | None = None, document_id: str = "", page_pres
 
 
 @register(mcp, mutating=True)
+def flip_page_orientation(account: str | None = None, document_id: str = "", flip: bool = True) -> dict:
+    """Toggle page orientation (portrait ↔ landscape) by swapping width and height."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.flip_page_orientation(document_id, flip))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
 def setup_header(account: str | None = None, document_id: str = "", text: str = "", header_type: str = "DEFAULT", index: int = 0) -> dict:
     """Create a default header and insert text. Returns headerId for further edits."""
     api, resolved = _api(account)
@@ -132,6 +140,14 @@ def insert_inline_image(account: str | None = None, document_id: str = "", uri: 
 
 
 @register(mcp, mutating=True)
+def insert_chart_image(account: str | None = None, document_id: str = "", uri: str = "", index: int = 1, width_pt: float = 468, height_pt: float = 280, segment_id: str | None = None) -> dict:
+    """Insert a chart rendered as an image (export from Sheets or another tool, then pass a public image URL). Default size fits a letter-width page."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.insert_chart_image(document_id, uri, index, width_pt, height_pt, segment_id))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
 def insert_table(account: str | None = None, document_id: str = "", rows: int = 2, columns: int = 2, index: int = 1, segment_id: str | None = None) -> dict:
     """Insert an empty table at the given body index (or in a header/footer via segment_id)."""
     api, resolved = _api(account)
@@ -140,18 +156,26 @@ def insert_table(account: str | None = None, document_id: str = "", rows: int = 
 
 
 @register(mcp, mutating=True)
-def insert_page_break(account: str | None = None, document_id: str = "", index: int = 1) -> dict:
-    """Insert a page break at the given body index."""
+def insert_page_break(account: str | None = None, document_id: str = "", index: int = 1, segment_id: str | None = None) -> dict:
+    """Insert a page break at the given index (body or header/footer via segment_id)."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.insert_page_break(document_id, index))
+    data = run_tool(lambda: api.insert_page_break(document_id, index, segment_id))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True)
-def insert_bullets(account: str | None = None, document_id: str = "", start_index: int = 1, end_index: int = 1, bullet_preset: str = "BULLET_DISC_CIRCLE_SQUARE") -> dict:
+def insert_bullets(account: str | None = None, document_id: str = "", start_index: int = 1, end_index: int = 1, bullet_preset: str = "BULLET_DISC_CIRCLE_SQUARE", segment_id: str | None = None) -> dict:
     """Turn the paragraphs in a range into a bulleted/numbered list (e.g. BULLET_DISC_CIRCLE_SQUARE, NUMBERED_DECIMAL_ALPHA_ROMAN)."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.insert_bullets(document_id, start_index, end_index, bullet_preset))
+    data = run_tool(lambda: api.insert_bullets(document_id, start_index, end_index, bullet_preset, segment_id))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def remove_bullets(account: str | None = None, document_id: str = "", start_index: int = 1, end_index: int = 1, segment_id: str | None = None) -> dict:
+    """Remove bullets/numbering from paragraphs in a range."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.remove_bullets(document_id, start_index, end_index, segment_id))
     return ok(resolved, data)
 
 

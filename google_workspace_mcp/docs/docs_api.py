@@ -77,8 +77,12 @@ class DocsAPI:
         }}])
 
     def _hex_to_rgb_color(self, hex_str):
-        hex_str = hex_str.lstrip("#")
-        r, g, b = int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16)
+        h = hex_str.lstrip("#")
+        if len(h) == 3:
+            h = "".join(c * 2 for c in h)
+        if len(h) != 6:
+            raise ValueError(f"invalid hex color: {hex_str!r}")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
         return {"red": r / 255, "green": g / 255, "blue": b / 255}
 
     def format_text(self, document_id, start_index, end_index, bold=None, italic=None, underline=None,
@@ -202,6 +206,10 @@ class DocsAPI:
             "fields": ",".join(fields),
         }}])
 
+    def flip_page_orientation(self, document_id, flip=True):
+        """Toggle between portrait and landscape (swaps page width/height)."""
+        return self.set_page_layout(document_id, flip_page_orientation=flip)
+
     def create_header(self, document_id, header_type="DEFAULT"):
         if header_type not in {"DEFAULT"}:
             raise ValueError("header_type must be DEFAULT")
@@ -244,6 +252,15 @@ class DocsAPI:
             req["insertInlineImage"]["objectSize"] = size
         return self._batch(document_id, [req])
 
+    def insert_chart_image(self, document_id, uri, index=1, width_pt=468, height_pt=280, segment_id=None):
+        """Insert a chart as an inline image (Google Docs has no native chart API).
+
+        Render the chart elsewhere (Sheets export, matplotlib, etc.) and pass a public image URL.
+        """
+        return self.insert_inline_image(
+            document_id, uri, index=index, width_pt=width_pt, height_pt=height_pt, segment_id=segment_id
+        )
+
     def insert_table(self, document_id, rows, columns, index=1, segment_id=None):
         location = {"index": index}
         if segment_id:
@@ -254,14 +271,26 @@ class DocsAPI:
             "location": location,
         }}])
 
-    def insert_page_break(self, document_id, index=1):
-        return self._batch(document_id, [{"insertPageBreak": {"location": {"index": index}}}])
+    def insert_page_break(self, document_id, index=1, segment_id=None):
+        location = {"index": index}
+        if segment_id:
+            location["segmentId"] = segment_id
+        return self._batch(document_id, [{"insertPageBreak": {"location": location}}])
 
-    def insert_bullets(self, document_id, start_index, end_index, bullet_preset="BULLET_DISC_CIRCLE_SQUARE"):
+    def insert_bullets(self, document_id, start_index, end_index, bullet_preset="BULLET_DISC_CIRCLE_SQUARE", segment_id=None):
+        text_range = {"startIndex": start_index, "endIndex": end_index}
+        if segment_id:
+            text_range["segmentId"] = segment_id
         return self._batch(document_id, [{"createParagraphBullets": {
-            "range": {"startIndex": start_index, "endIndex": end_index},
+            "range": text_range,
             "bulletPreset": bullet_preset,
         }}])
+
+    def remove_bullets(self, document_id, start_index, end_index, segment_id=None):
+        text_range = {"startIndex": start_index, "endIndex": end_index}
+        if segment_id:
+            text_range["segmentId"] = segment_id
+        return self._batch(document_id, [{"deleteParagraphBullets": {"range": text_range}}])
 
     def delete_range(self, document_id, start_index, end_index, segment_id=None):
         text_range = {"startIndex": start_index, "endIndex": end_index}
