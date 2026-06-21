@@ -309,6 +309,14 @@ def add_table(account: str | None = None, spreadsheet_id: str = "", range: str =
     return ok(resolved, data)
 
 
+@register(mcp, mutating=True, destructive=True)
+def delete_table(account: str | None = None, spreadsheet_id: str = "", table_id: str = "") -> dict:
+    """Delete a native table by its tableId (from the add_table reply, or get_spreadsheet where each sheet lists its 'tables'). Cell values remain; the table structure is removed."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.delete_table(spreadsheet_id, table_id))
+    return ok(resolved, data)
+
+
 @register(mcp, mutating=True)
 def format_table(account: str | None = None, spreadsheet_id: str = "", range: str = "", header_color: str = "#355468", header_text_color: str = "#FFFFFF", first_band_color: str = "#FFFFFF", second_band_color: str = "#F3F3F3", wrap: bool = True, auto_resize_columns: bool = True, add_filter: bool = True, add_borders: bool = True, freeze_header: bool = True) -> dict:
     """One-shot table styling: formatted header, alternating row colors, text wrap, auto column width, filter dropdowns, borders, and frozen header row."""

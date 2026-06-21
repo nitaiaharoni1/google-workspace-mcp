@@ -468,6 +468,14 @@ class TestSheetsAPIDimensions:
         assert req["name"] == "MyTable"
         assert len(req["columnProperties"]) == 3
 
+    def test_delete_table(self, api_with_meta):
+        api, svc = api_with_meta
+        api.delete_table("sid", "table123")
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"deleteTable": {"tableId": "table123"}}]},
+        )
+
     def test_filter_spec_requires_criteria(self, api_with_meta):
         api, _ = api_with_meta
         with pytest.raises(ValueError, match="filter_spec"):
@@ -724,6 +732,19 @@ async def test_hide_columns_tool(patched_server):
     result = _parse_result(raw)
     assert result["ok"] is True
     patched_server.set_dimension_visibility.assert_called_with("sid", "Sheet1!C:D", "COLUMNS", True)
+
+
+@pytest.mark.anyio
+async def test_delete_table_tool(patched_server):
+    patched_server.delete_table.return_value = {"replies": [{}]}
+
+    raw = await mcp.call_tool("delete_table", {
+        "spreadsheet_id": "sid",
+        "table_id": "table123",
+    })
+    result = _parse_result(raw)
+    assert result["ok"] is True
+    patched_server.delete_table.assert_called_with("sid", "table123")
 
 
 class TestSheetsChartExport:

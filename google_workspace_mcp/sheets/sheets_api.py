@@ -449,6 +449,9 @@ class SheetsAPI:
             ]
         return self._batch(spreadsheet_id, [{"addTable": {"table": table}}])
 
+    def delete_table(self, spreadsheet_id, table_id):
+        return self._batch(spreadsheet_id, [{"deleteTable": {"tableId": table_id}}])
+
     def format_table(self, spreadsheet_id, range, header_color="#355468", header_text_color="#FFFFFF",
                      first_band_color="#FFFFFF", second_band_color="#F3F3F3", wrap=True, auto_resize_columns=True,
                      add_filter=True, add_borders=True, freeze_header=True):
