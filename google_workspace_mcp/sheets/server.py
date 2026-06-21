@@ -349,5 +349,55 @@ def write_formulas(account: str | None = None, spreadsheet_id: str = "", range: 
     return ok(resolved, data)
 
 
+# --- TEXT EDITING (mutating) tools ---
+
+@register(mcp, mutating=True)
+def edit_cell(account: str | None = None, spreadsheet_id: str = "", cell: str = "", operation: str = "", find: str | None = None, replacement: str | None = None, position: int | None = None, length: int | None = None, text: str | None = None, count: int | None = None) -> dict:
+    """Edit the text of a single cell in place. operation is one of replace/insert/delete/append/prepend/newline. Reads the cell's literal text (the formula string for formula cells), applies the edit, writes it back. 'newline' adds an in-cell line break (pair with format_cells wrap=True). Returns {cell, old, new, changed}."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.edit_cell(spreadsheet_id, cell, operation, find, replacement, position, length, text, count))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def transform_text(account: str | None = None, spreadsheet_id: str = "", range: str = "", transform: str = "") -> dict:
+    """Bulk text transform across a range: upper/lower/title/capitalize/trim/collapse_spaces. Transforms literal text only; cells holding a formula ('=...') and numbers are left unchanged."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.transform_text(spreadsheet_id, range, transform))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def regex_replace(account: str | None = None, spreadsheet_id: str = "", range: str = "", pattern: str = "", replacement: str = "", count: int = 0, ignore_case: bool = False) -> dict:
+    r"""Regex find/replace across a range using Python re. Supports \1 / \g<name> backreferences (unlike native find_replace). count=0 replaces all matches in each cell. Cells holding a formula ('=...') are skipped."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.regex_replace(spreadsheet_id, range, pattern, replacement, count, ignore_case))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True, destructive=True)
+def split_column(account: str | None = None, spreadsheet_id: str = "", range: str = "", delimiter: str = "", max_splits: int = -1) -> dict:
+    """Split a single column's cells by a delimiter into adjacent columns (like Sheets 'Split text to columns'). OVERWRITES columns to the right of the source column. max_splits=-1 means no limit."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.split_column(spreadsheet_id, range, delimiter, max_splits))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def join_columns(account: str | None = None, spreadsheet_id: str = "", range: str = "", separator: str = " ", target_range: str | None = None) -> dict:
+    """Join each row of a multi-column range into one string (separator placed between non-empty cells) and write it to target_range. target_range defaults to the range's first column (overwriting it)."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.join_columns(spreadsheet_id, range, separator, target_range))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def regex_extract(account: str | None = None, spreadsheet_id: str = "", range: str = "", pattern: str = "", group: int = 0, target_range: str | None = None) -> dict:
+    """Extract the first regex match (or a capture group) from each cell in a single column into target_range. group=0 is the whole match. target_range defaults in-place (overwriting the source column). Non-matching cells become ''."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.regex_extract(spreadsheet_id, range, pattern, group, target_range))
+    return ok(resolved, data)
+
+
 def main():
     mcp.run()

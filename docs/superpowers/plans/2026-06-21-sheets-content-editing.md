@@ -770,7 +770,7 @@ import traceback
 
 from google_workspace_mcp.sheets.sheets_api import SheetsAPI
 
-ACCOUNT = "aviv.joels@gmail.com"
+ACCOUNT = "nitaiaharoni1@gmail.com"
 PASS = 0
 FAIL = 0
 
@@ -922,7 +922,7 @@ if __name__ == "__main__":
 Run: `.venv/bin/python -m pytest tests/test_sheets_server.py -v`
 Expected: PASS (all existing + new tests).
 
-- [ ] **Step 3: Run the live audit (requires the `aviv.joels@gmail.com` credential)**
+- [ ] **Step 3: Run the live audit (requires the `nitaiaharoni1@gmail.com` credential)**
 
 Run: `.venv/bin/python tests/live_sheets_editing.py`
 Expected: `PASSED: N  FAILED: 0`. If any op fails read-back, fix the underlying

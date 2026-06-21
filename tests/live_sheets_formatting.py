@@ -11,7 +11,7 @@ import traceback
 
 from google_workspace_mcp.sheets.sheets_api import SheetsAPI
 
-ACCOUNT = "aviv.joels@gmail.com"
+ACCOUNT = "nitaiaharoni1@gmail.com"
 PASS = 0
 FAIL = 0
 
@@ -121,6 +121,23 @@ def main() -> int:
         api.update_range(sheet_id, "Sheet1!A6", [["This is a long wrapped cell value for testing text wrap behavior"]])
         api.format_cells(sheet_id, "Sheet1!A6", wrap=True)
         check("text wrap ok", True)
+
+        print("\n13. find_replace (replace 'Active' -> 'Open' in column C)")
+        api.find_replace(sheet_id, find="Active", replacement="Open", range="Sheet1!A1:D5")
+        after = api.read_range(sheet_id, "Sheet1!C2")
+        check("find_replace changed C2 to Open", after.get("values", [[""]])[0][0] == "Open")
+
+        print("\n14. edit_cell (append + newline on A1)")
+        api.edit_cell(sheet_id, "Sheet1!A1", "append", text=" (edited)")
+        api.edit_cell(sheet_id, "Sheet1!A1", "newline", text="line2")
+        a1 = api.read_range(sheet_id, "Sheet1!A1")
+        check("edit_cell produced multi-line A1", "line2" in a1.get("values", [[""]])[0][0])
+
+        print("\n15. transform_text (upper-case the Status column)")
+        api.transform_text(sheet_id, "Sheet1!C2:C5", "upper")
+        c = api.read_range(sheet_id, "Sheet1!C2:C5")
+        vals = [r[0] for r in c.get("values", []) if r]
+        check("transform_text upper-cased Status", all(v == v.upper() for v in vals))
 
     except Exception as exc:
         print(f"\n  ✗ EXCEPTION: {exc}")

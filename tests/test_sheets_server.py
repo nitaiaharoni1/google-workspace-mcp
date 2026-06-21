@@ -543,6 +543,199 @@ class TestSheetsAPIDimensions:
             api.format_cells("sid", "Tab!A1", background_color="not-a-color")
 
 
+class TestSheetsAPITextEditing:
+    """Unit tests for within-cell / text-granular editing methods."""
+
+    def test_edit_cell_insert(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["hello"]]}
+        svc.spreadsheets().values().update.return_value.execute.return_value = {"updatedCells": 1}
+        result = api.edit_cell("sid", "Sheet1!B2", "insert", position=2, text="XX")
+        svc.spreadsheets().values().get.assert_called_with(
+            spreadsheetId="sid", range="Sheet1!B2", valueRenderOption="FORMULA")
+        svc.spreadsheets().values().update.assert_called_with(
+            spreadsheetId="sid", range="Sheet1!B2", valueInputOption="USER_ENTERED",
+            body={"values": [["heXXllo"]]})
+        assert result == {"cell": "Sheet1!B2", "old": "hello", "new": "heXXllo", "changed": True}
+
+    def test_edit_cell_newline(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["line1"]]}
+        svc.spreadsheets().values().update.return_value.execute.return_value = {"updatedCells": 1}
+        api.edit_cell("sid", "Sheet1!A1", "newline", text="line2")
+        svc.spreadsheets().values().update.assert_called_with(
+            spreadsheetId="sid", range="Sheet1!A1", valueInputOption="USER_ENTERED",
+            body={"values": [["line1\nline2"]]})
+
+    def test_edit_cell_replace_count(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["a-a-a"]]}
+        svc.spreadsheets().values().update.return_value.execute.return_value = {"updatedCells": 1}
+        api.edit_cell("sid", "Sheet1!A1", "replace", find="-", replacement="+", count=1)
+        svc.spreadsheets().values().update.assert_called_with(
+            spreadsheetId="sid", range="Sheet1!A1", valueInputOption="USER_ENTERED",
+            body={"values": [["a+a-a"]]})
+
+    def test_edit_cell_delete_on_empty_is_noop(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {}
+        result = api.edit_cell("sid", "Sheet1!A1", "delete", position=0, length=3)
+        svc.spreadsheets().values().update.assert_not_called()
+        assert result == {"cell": "Sheet1!A1", "old": "", "new": "", "changed": False}
+
+    def test_edit_cell_edits_formula_text(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["=SUM(A1:A5)"]]}
+        svc.spreadsheets().values().update.return_value.execute.return_value = {"updatedCells": 1}
+        api.edit_cell("sid", "Sheet1!B1", "replace", find="A5", replacement="A6")
+        svc.spreadsheets().values().update.assert_called_with(
+            spreadsheetId="sid", range="Sheet1!B1", valueInputOption="USER_ENTERED",
+            body={"values": [["=SUM(A1:A6)"]]})
+
+    def test_edit_cell_rejects_range(self, sheets_api):
+        api, _ = sheets_api
+        with pytest.raises(ValueError, match="single cell"):
+            api.edit_cell("sid", "Sheet1!A1:B2", "append", text="x")
+
+    def test_edit_cell_unknown_operation(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["x"]]}
+        with pytest.raises(ValueError, match="operation"):
+            api.edit_cell("sid", "Sheet1!A1", "frobnicate", text="x")
+
+    def test_transform_text_upper_skips_formula_and_numbers(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {
+            "values": [["abc", "=SUM(A1:A2)"], [5, "def"]]
+        }
+        svc.spreadsheets().values().update.return_value.execute.return_value = {"updatedCells": 4}
+        api.transform_text("sid", "Sheet1!A1:B2", "upper")
+        svc.spreadsheets().values().get.assert_called_with(
+            spreadsheetId="sid", range="Sheet1!A1:B2", valueRenderOption="FORMULA")
+        svc.spreadsheets().values().update.assert_called_with(
+            spreadsheetId="sid", range="Sheet1!A1:B2", valueInputOption="USER_ENTERED",
+            body={"values": [["ABC", "=SUM(A1:A2)"], [5, "DEF"]]})
+
+    def test_transform_text_collapse_spaces(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["  a   b  "]]}
+        svc.spreadsheets().values().update.return_value.execute.return_value = {"updatedCells": 1}
+        api.transform_text("sid", "Sheet1!A1", "collapse_spaces")
+        svc.spreadsheets().values().update.assert_called_with(
+            spreadsheetId="sid", range="Sheet1!A1", valueInputOption="USER_ENTERED",
+            body={"values": [["a b"]]})
+
+    def test_transform_text_unknown(self, sheets_api):
+        api, _ = sheets_api
+        with pytest.raises(ValueError, match="transform"):
+            api.transform_text("sid", "Sheet1!A1", "sideways")
+
+    def test_transform_text_empty_range_noop(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {}
+        result = api.transform_text("sid", "Sheet1!A1:B2", "upper")
+        svc.spreadsheets().values().update.assert_not_called()
+        assert result == {"updatedCells": 0}
+
+    def test_regex_replace_backref(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["John Smith"], ["=A1"]]}
+        svc.spreadsheets().values().update.return_value.execute.return_value = {"updatedCells": 2}
+        api.regex_replace("sid", "Sheet1!A1:A2", r"(\w+) (\w+)", r"\2 \1")
+        svc.spreadsheets().values().update.assert_called_with(
+            spreadsheetId="sid", range="Sheet1!A1:A2", valueInputOption="USER_ENTERED",
+            body={"values": [["Smith John"], ["=A1"]]})
+
+    def test_regex_replace_ignore_case(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["FooFOO"]]}
+        svc.spreadsheets().values().update.return_value.execute.return_value = {"updatedCells": 1}
+        api.regex_replace("sid", "Sheet1!A1", "foo", "x", ignore_case=True)
+        svc.spreadsheets().values().update.assert_called_with(
+            spreadsheetId="sid", range="Sheet1!A1", valueInputOption="USER_ENTERED",
+            body={"values": [["xx"]]})
+
+    def test_regex_replace_invalid_pattern(self, sheets_api):
+        api, _ = sheets_api
+        with pytest.raises(ValueError, match="invalid regex"):
+            api.regex_replace("sid", "Sheet1!A1", "(", "x")
+
+    def test_split_column(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["a,b,c"], ["d,e"]]}
+        svc.spreadsheets().values().update.return_value.execute.return_value = {"updatedCells": 5}
+        api.split_column("sid", "Sheet1!A1:A2", ",")
+        svc.spreadsheets().values().update.assert_called_with(
+            spreadsheetId="sid", range="'Sheet1'!A1", valueInputOption="USER_ENTERED",
+            body={"values": [["a", "b", "c"], ["d", "e", ""]]})
+
+    def test_split_column_no_sheet_prefix(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["x|y"]]}
+        svc.spreadsheets().values().update.return_value.execute.return_value = {"updatedCells": 2}
+        api.split_column("sid", "A1:A1", "|")
+        svc.spreadsheets().values().update.assert_called_with(
+            spreadsheetId="sid", range="A1", valueInputOption="USER_ENTERED",
+            body={"values": [["x", "y"]]})
+
+    def test_split_column_rejects_multi_column(self, sheets_api):
+        api, _ = sheets_api
+        with pytest.raises(ValueError, match="single column"):
+            api.split_column("sid", "Sheet1!A1:B2", ",")
+
+    def test_join_columns_default_target(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["John", "Smith"], ["Jane", ""]]}
+        svc.spreadsheets().values().update.return_value.execute.return_value = {"updatedCells": 2}
+        api.join_columns("sid", "Sheet1!A1:B2", separator=" ")
+        svc.spreadsheets().values().update.assert_called_with(
+            spreadsheetId="sid", range="'Sheet1'!A1", valueInputOption="USER_ENTERED",
+            body={"values": [["John Smith"], ["Jane"]]})
+
+    def test_join_columns_explicit_target(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["a", "b", "c"]]}
+        svc.spreadsheets().values().update.return_value.execute.return_value = {"updatedCells": 1}
+        api.join_columns("sid", "Sheet1!A1:C1", separator="-", target_range="Sheet1!E1")
+        svc.spreadsheets().values().update.assert_called_with(
+            spreadsheetId="sid", range="Sheet1!E1", valueInputOption="USER_ENTERED",
+            body={"values": [["a-b-c"]]})
+
+    def test_regex_extract_group_to_target(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["Order #123"], ["nope"]]}
+        svc.spreadsheets().values().update.return_value.execute.return_value = {"updatedCells": 2}
+        api.regex_extract("sid", "Sheet1!A1:A2", r"#(\d+)", group=1, target_range="Sheet1!B1")
+        svc.spreadsheets().values().update.assert_called_with(
+            spreadsheetId="sid", range="Sheet1!B1", valueInputOption="USER_ENTERED",
+            body={"values": [["123"], [""]]})
+
+    def test_regex_extract_default_target_in_place(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["abc123"]]}
+        svc.spreadsheets().values().update.return_value.execute.return_value = {"updatedCells": 1}
+        api.regex_extract("sid", "Sheet1!A1", r"\d+")
+        svc.spreadsheets().values().update.assert_called_with(
+            spreadsheetId="sid", range="'Sheet1'!A1", valueInputOption="USER_ENTERED",
+            body={"values": [["123"]]})
+
+    def test_regex_extract_rejects_multi_column(self, sheets_api):
+        api, _ = sheets_api
+        with pytest.raises(ValueError, match="single column"):
+            api.regex_extract("sid", "Sheet1!A1:B2", r"\d+")
+
+    def test_regex_extract_invalid_pattern(self, sheets_api):
+        api, _ = sheets_api
+        with pytest.raises(ValueError, match="invalid regex"):
+            api.regex_extract("sid", "Sheet1!A1", "(")
+
+    def test_regex_extract_invalid_group(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["abc123"]]}
+        with pytest.raises(ValueError, match="invalid capture group"):
+            api.regex_extract("sid", "Sheet1!A1", r"\d+", group=2)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # (b) Server integration tests — monkeypatch _api
 # ──────────────────────────────────────────────────────────────────────────────
@@ -584,6 +777,9 @@ async def test_list_tools_includes_expected(patched_server):
         "merge_cells", "unmerge_cells", "add_banding", "update_banding", "delete_banding",
         "add_table", "update_table", "delete_table", "format_table", "read_formulas", "write_formulas",
         "find_replace", "copy_paste", "cut_paste", "hide_columns", "hide_rows",
+        # text editing
+        "edit_cell", "transform_text", "regex_replace",
+        "split_column", "join_columns", "regex_extract",
         # common tools
         "list_accounts", "auth_status", "whoami",
     }
@@ -748,6 +944,72 @@ async def test_find_replace_tool(patched_server):
     result = _parse_result(raw)
     assert result["ok"] is True
     assert result["data"]["occurrencesChanged"] == 3
+
+
+@pytest.mark.anyio
+async def test_edit_cell_tool(patched_server):
+    patched_server.edit_cell.return_value = {"cell": "Sheet1!A1", "old": "hi", "new": "hi!", "changed": True}
+    raw = await mcp.call_tool("edit_cell", {
+        "spreadsheet_id": "sid", "cell": "Sheet1!A1", "operation": "append", "text": "!",
+    })
+    result = _parse_result(raw)
+    assert result["ok"] is True
+    assert result["data"]["new"] == "hi!"
+
+
+@pytest.mark.anyio
+async def test_transform_text_tool(patched_server):
+    patched_server.transform_text.return_value = {"updatedCells": 2}
+    raw = await mcp.call_tool("transform_text", {
+        "spreadsheet_id": "sid", "range": "Sheet1!A1:A2", "transform": "upper",
+    })
+    result = _parse_result(raw)
+    assert result["ok"] is True
+    assert result["data"]["updatedCells"] == 2
+
+
+@pytest.mark.anyio
+async def test_regex_replace_tool(patched_server):
+    patched_server.regex_replace.return_value = {"updatedCells": 1}
+    raw = await mcp.call_tool("regex_replace", {
+        "spreadsheet_id": "sid", "range": "Sheet1!A1", "pattern": r"(\w+)", "replacement": r"\1!",
+    })
+    result = _parse_result(raw)
+    assert result["ok"] is True
+    assert result["data"]["updatedCells"] == 1
+
+
+@pytest.mark.anyio
+async def test_split_column_tool(patched_server):
+    patched_server.split_column.return_value = {"updatedCells": 4}
+    raw = await mcp.call_tool("split_column", {
+        "spreadsheet_id": "sid", "range": "Sheet1!A1:A2", "delimiter": ",",
+    })
+    result = _parse_result(raw)
+    assert result["ok"] is True
+    assert result["data"]["updatedCells"] == 4
+
+
+@pytest.mark.anyio
+async def test_join_columns_tool(patched_server):
+    patched_server.join_columns.return_value = {"updatedCells": 2}
+    raw = await mcp.call_tool("join_columns", {
+        "spreadsheet_id": "sid", "range": "Sheet1!A1:B2", "separator": " ",
+    })
+    result = _parse_result(raw)
+    assert result["ok"] is True
+    assert result["data"]["updatedCells"] == 2
+
+
+@pytest.mark.anyio
+async def test_regex_extract_tool(patched_server):
+    patched_server.regex_extract.return_value = {"updatedCells": 2}
+    raw = await mcp.call_tool("regex_extract", {
+        "spreadsheet_id": "sid", "range": "Sheet1!A1:A2", "pattern": r"\d+", "target_range": "Sheet1!B1",
+    })
+    result = _parse_result(raw)
+    assert result["ok"] is True
+    assert result["data"]["updatedCells"] == 2
 
 
 @pytest.mark.anyio

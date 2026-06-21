@@ -1,6 +1,8 @@
 """Minimal Google Sheets API wrapper (values + structure operations)."""
 from __future__ import annotations
 
+import re
+
 import google_auth_core as core
 from google.auth.transport.requests import Request as GoogleAuthRequest
 
@@ -146,6 +148,26 @@ class SheetsAPI:
     def _a1_to_grid_range(self, spreadsheet_id, a1, meta=None):
         _, _, grid, _, _, _, _ = self._resolve_a1(spreadsheet_id, a1, meta)
         return grid
+
+    def _parse_a1_local(self, a1):
+        """Parse an A1 string without any API call.
+        Returns (sheet_name, start_col, start_row, end_col, end_row) as strings."""
+        sheet_name, sep, cell_part = a1.rpartition("!")
+        sheet_name = sheet_name.strip("'\"") if sep else ""
+        start, _, end = cell_part.partition(":")
+        end = end or start
+
+        def split(cell):
+            return ("".join(c for c in cell if c.isalpha()),
+                    "".join(c for c in cell if c.isdigit()))
+
+        start_col, start_row = split(start)
+        end_col, end_row = split(end)
+        return sheet_name, start_col, start_row, end_col, end_row
+
+    def _anchor(self, sheet_name, col, row):
+        cell = f"{col}{row}"
+        return self._quoted_sheet_range(sheet_name, cell) if sheet_name else cell
 
     def _a1_to_grid_coordinate(self, spreadsheet_id, a1, meta=None):
         _, sheet_id, grid, _, _, _, _ = self._resolve_a1(spreadsheet_id, a1, meta)
@@ -567,6 +589,155 @@ class SheetsAPI:
 
     def read_formulas(self, spreadsheet_id, range):
         return self.read_range(spreadsheet_id, range, value_render_option="FORMULA")
+
+    # --- text editing ---
+    def _read_text_grid(self, spreadsheet_id, range):
+        resp = self.read_range(spreadsheet_id, range, value_render_option="FORMULA")
+        return resp.get("values") or []
+
+    def _assert_single_cell(self, cell):
+        name, sc, sr, ec, er = self._parse_a1_local(cell)
+        if not (sc and sr and sc == ec and sr == er):
+            raise ValueError(f"edit_cell expects a single cell like 'Sheet1!B2', got {cell!r}")
+
+    def edit_cell(self, spreadsheet_id, cell, operation, find=None, replacement=None,
+                  position=None, length=None, text=None, count=None):
+        self._assert_single_cell(cell)
+        resp = self.read_range(spreadsheet_id, cell, value_render_option="FORMULA")
+        values = resp.get("values") or []
+        raw = values[0][0] if (values and values[0]) else ""
+        old = "" if raw is None else str(raw)
+
+        if operation == "replace":
+            if find is None:
+                raise ValueError("edit_cell 'replace' requires 'find'")
+            new = old.replace(find, replacement or "", -1 if count is None else count)
+        elif operation == "insert":
+            if position is None or text is None:
+                raise ValueError("edit_cell 'insert' requires 'position' and 'text'")
+            pos = max(0, min(position, len(old)))
+            new = old[:pos] + text + old[pos:]
+        elif operation == "delete":
+            if position is None or length is None:
+                raise ValueError("edit_cell 'delete' requires 'position' and 'length'")
+            pos = max(0, min(position, len(old)))
+            new = old[:pos] + old[pos + max(0, length):]
+        elif operation == "append":
+            if text is None:
+                raise ValueError("edit_cell 'append' requires 'text'")
+            new = old + text
+        elif operation == "prepend":
+            if text is None:
+                raise ValueError("edit_cell 'prepend' requires 'text'")
+            new = text + old
+        elif operation == "newline":
+            new = old + "\n" + (text or "")
+        else:
+            raise ValueError(
+                "edit_cell operation must be one of "
+                "replace/insert/delete/append/prepend/newline"
+            )
+
+        changed = new != old
+        if changed:
+            self.update_range(spreadsheet_id, cell, [[new]], "USER_ENTERED")
+        return {"cell": cell, "old": old, "new": new, "changed": changed}
+
+    def transform_text(self, spreadsheet_id, range, transform):
+        funcs = {
+            "upper": str.upper,
+            "lower": str.lower,
+            "title": str.title,
+            "capitalize": str.capitalize,
+            "trim": str.strip,
+            "collapse_spaces": lambda s: re.sub(r"\s+", " ", s).strip(),
+        }
+        if transform not in funcs:
+            raise ValueError(f"transform must be one of {sorted(funcs)}")
+        fn = funcs[transform]
+        grid = self._read_text_grid(spreadsheet_id, range)
+        out = [
+            [fn(cell) if (isinstance(cell, str) and not cell.startswith("=")) else cell for cell in row]
+            for row in grid
+        ]
+        if not out:
+            return {"updatedCells": 0}
+        return self.update_range(spreadsheet_id, range, out, "USER_ENTERED")
+
+    def regex_replace(self, spreadsheet_id, range, pattern, replacement, count=0, ignore_case=False):
+        try:
+            rx = re.compile(pattern, re.IGNORECASE if ignore_case else 0)
+        except re.error as exc:
+            raise ValueError(f"invalid regex: {exc}")
+        grid = self._read_text_grid(spreadsheet_id, range)
+        out = [
+            [rx.sub(replacement, cell, count=count) if (isinstance(cell, str) and not cell.startswith("=")) else cell
+             for cell in row]
+            for row in grid
+        ]
+        if not out:
+            return {"updatedCells": 0}
+        return self.update_range(spreadsheet_id, range, out, "USER_ENTERED")
+
+    def _assert_single_column(self, range, op):
+        name, sc, sr, ec, er = self._parse_a1_local(range)
+        if not (sc and sc == ec):
+            raise ValueError(f"{op} expects a single column like 'Sheet1!A1:A20', got {range!r}")
+        return name, sc, sr
+
+    def split_column(self, spreadsheet_id, range, delimiter, max_splits=-1):
+        sheet_name, start_col, start_row = self._assert_single_column(range, "split_column")
+        grid = self._read_text_grid(spreadsheet_id, range)
+        rows = []
+        width = 1
+        for row in grid:
+            cell = row[0] if row else ""
+            s = cell if isinstance(cell, str) else str(cell)
+            parts = s.split(delimiter, max_splits) if s != "" else [""]
+            width = max(width, len(parts))
+            rows.append(parts)
+        out = [r + [""] * (width - len(r)) for r in rows]
+        if not out:
+            return {"updatedCells": 0}
+        anchor = self._anchor(sheet_name, start_col, start_row)
+        return self.update_range(spreadsheet_id, anchor, out, "USER_ENTERED")
+
+    def join_columns(self, spreadsheet_id, range, separator=" ", target_range=None):
+        sheet_name, start_col, start_row, _, _ = self._parse_a1_local(range)
+        grid = self._read_text_grid(spreadsheet_id, range)
+        out = []
+        for row in grid:
+            parts = [(c if isinstance(c, str) else str(c)) for c in row]
+            parts = [p for p in parts if p != ""]
+            out.append([separator.join(parts)])
+        if not out:
+            return {"updatedCells": 0}
+        target = target_range or self._anchor(sheet_name, start_col, start_row)
+        return self.update_range(spreadsheet_id, target, out, "USER_ENTERED")
+
+    def regex_extract(self, spreadsheet_id, range, pattern, group=0, target_range=None):
+        sheet_name, start_col, start_row = self._assert_single_column(range, "regex_extract")
+        try:
+            rx = re.compile(pattern)
+        except re.error as exc:
+            raise ValueError(f"invalid regex: {exc}")
+        grid = self._read_text_grid(spreadsheet_id, range)
+        out = []
+        for row in grid:
+            cell = row[0] if row else ""
+            s = cell if isinstance(cell, str) else str(cell)
+            m = rx.search(s)
+            if m:
+                try:
+                    out.append([m.group(group)])
+                except IndexError:
+                    raise ValueError(f"invalid capture group {group}")
+            else:
+                out.append([""])
+        if not out:
+            return {"updatedCells": 0}
+        target = target_range or self._anchor(sheet_name, start_col, start_row)
+        return self.update_range(spreadsheet_id, target, out, "USER_ENTERED")
 
     # --- chart export (for Docs insert_sheets_chart) ---
 
