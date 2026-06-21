@@ -230,6 +230,30 @@ class TestSheetsAPIDimensions:
             }}]},
         )
 
+    def test_hide_columns(self, api_with_meta):
+        api, svc = api_with_meta
+        api.set_dimension_visibility("sid", "Tab!C:D", "COLUMNS", True)
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"updateDimensionProperties": {
+                "range": {"sheetId": 7, "dimension": "COLUMNS", "startIndex": 2, "endIndex": 4},
+                "properties": {"hiddenByUser": True},
+                "fields": "hiddenByUser",
+            }}]},
+        )
+
+    def test_unhide_rows(self, api_with_meta):
+        api, svc = api_with_meta
+        api.set_dimension_visibility("sid", "Tab!2:5", "ROWS", False)
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"updateDimensionProperties": {
+                "range": {"sheetId": 7, "dimension": "ROWS", "startIndex": 1, "endIndex": 5},
+                "properties": {"hiddenByUser": False},
+                "fields": "hiddenByUser",
+            }}]},
+        )
+
     def test_freeze_panes(self, api_with_meta):
         api, svc = api_with_meta
         api.freeze_panes("sid", "Tab!A1", rows=1, cols=2)
@@ -687,6 +711,19 @@ async def test_cut_paste_tool(patched_server):
     result = _parse_result(raw)
     assert result["ok"] is True
     assert result["data"] == {"replies": [{}]}
+
+
+@pytest.mark.anyio
+async def test_hide_columns_tool(patched_server):
+    patched_server.set_dimension_visibility.return_value = {"replies": [{}]}
+
+    raw = await mcp.call_tool("hide_columns", {
+        "spreadsheet_id": "sid",
+        "range": "Sheet1!C:D",
+    })
+    result = _parse_result(raw)
+    assert result["ok"] is True
+    patched_server.set_dimension_visibility.assert_called_with("sid", "Sheet1!C:D", "COLUMNS", True)
 
 
 class TestSheetsChartExport:

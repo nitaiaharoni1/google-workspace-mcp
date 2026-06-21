@@ -198,6 +198,22 @@ def resize_rows(account: str | None = None, spreadsheet_id: str = "", range: str
 
 
 @register(mcp, mutating=True)
+def hide_columns(account: str | None = None, spreadsheet_id: str = "", range: str = "", hidden: bool = True) -> dict:
+    """Hide the columns covered by a column range (e.g. 'Sheet1!C:D'). Pass hidden=False to unhide them."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.set_dimension_visibility(spreadsheet_id, range, "COLUMNS", hidden))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def hide_rows(account: str | None = None, spreadsheet_id: str = "", range: str = "", hidden: bool = True) -> dict:
+    """Hide the rows covered by a row range (e.g. 'Sheet1!3:5'). Pass hidden=False to unhide them."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.set_dimension_visibility(spreadsheet_id, range, "ROWS", hidden))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
 def freeze_panes(account: str | None = None, spreadsheet_id: str = "", range: str = "", rows: int | None = None, cols: int | None = None) -> dict:
     """Freeze the first N rows and/or columns of the sheet containing the given range (A1 notation). Pass 0 to unfreeze."""
     api, resolved = _api(account)

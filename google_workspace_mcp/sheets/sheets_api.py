@@ -400,6 +400,13 @@ class SheetsAPI:
             spreadsheetId=spreadsheet_id, body={"requests": [req]}
         ).execute()
 
+    def set_dimension_visibility(self, spreadsheet_id, range, dimension, hidden):
+        dim = self._dimension_range(spreadsheet_id, range, dimension)
+        req = {"updateDimensionProperties": {"range": dim, "properties": {"hiddenByUser": hidden}, "fields": "hiddenByUser"}}
+        return self.service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id, body={"requests": [req]}
+        ).execute()
+
     # --- sheet-level helpers ---
     def freeze_panes(self, spreadsheet_id, range, rows=None, cols=None):
         grid = self._a1_to_grid_range(spreadsheet_id, range)
