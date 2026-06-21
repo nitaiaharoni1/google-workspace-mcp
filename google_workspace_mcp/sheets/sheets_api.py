@@ -297,6 +297,30 @@ class SheetsAPI:
             spreadsheetId=spreadsheet_id, body={"requests": [req]}
         ).execute()
 
+    def find_replace(self, spreadsheet_id, find, replacement, range=None, all_sheets=False,
+                     match_case=False, match_entire_cell=False, search_by_regex=False,
+                     include_formulas=False):
+        fr = {
+            "find": find,
+            "replacement": replacement,
+            "matchCase": match_case,
+            "matchEntireCell": match_entire_cell,
+            "searchByRegex": search_by_regex,
+            "includeFormulas": include_formulas,
+        }
+        if all_sheets:
+            fr["allSheets"] = True
+        elif range:
+            meta = self.get_spreadsheet(spreadsheet_id)
+            titles = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
+            if "!" not in range and range in titles:
+                fr["sheetId"] = titles[range]
+            else:
+                fr["range"] = self._a1_to_grid_range(spreadsheet_id, range, meta)
+        else:
+            raise ValueError("find_replace requires range or all_sheets=True")
+        return self._batch(spreadsheet_id, [{"findReplace": fr}])
+
     def merge_cells(self, spreadsheet_id, range, merge_type="MERGE_ALL"):
         grid = self._a1_to_grid_range(spreadsheet_id, range)
         req = {"mergeCells": {"range": grid, "mergeType": merge_type}}

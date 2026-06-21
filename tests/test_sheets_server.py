@@ -312,6 +312,51 @@ class TestSheetsAPIDimensions:
             }}}]},
         )
 
+    def test_find_replace_range_scope(self, api_with_meta):
+        api, svc = api_with_meta
+        api.find_replace("sid", "old", "new", range="Tab!A1:C9")
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"findReplace": {
+                "find": "old", "replacement": "new",
+                "matchCase": False, "matchEntireCell": False,
+                "searchByRegex": False, "includeFormulas": False,
+                "range": {"sheetId": 7, "startColumnIndex": 0, "endColumnIndex": 3,
+                          "startRowIndex": 0, "endRowIndex": 9},
+            }}]},
+        )
+
+    def test_find_replace_bare_sheet_scope(self, api_with_meta):
+        api, svc = api_with_meta
+        api.find_replace("sid", "old", "new", range="Tab", match_case=True)
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"findReplace": {
+                "find": "old", "replacement": "new",
+                "matchCase": True, "matchEntireCell": False,
+                "searchByRegex": False, "includeFormulas": False,
+                "sheetId": 7,
+            }}]},
+        )
+
+    def test_find_replace_all_sheets_regex(self, api_with_meta):
+        api, svc = api_with_meta
+        api.find_replace("sid", "a.*", "x", all_sheets=True, search_by_regex=True)
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"findReplace": {
+                "find": "a.*", "replacement": "x",
+                "matchCase": False, "matchEntireCell": False,
+                "searchByRegex": True, "includeFormulas": False,
+                "allSheets": True,
+            }}]},
+        )
+
+    def test_find_replace_requires_scope(self, api_with_meta):
+        api, _ = api_with_meta
+        with pytest.raises(ValueError):
+            api.find_replace("sid", "old", "new")
+
     def test_format_cells_wrap_and_vertical(self, api_with_meta):
         api, svc = api_with_meta
         api.format_cells("sid", "Tab!A1", wrap=True, vertical_alignment="TOP", strikethrough=True)
@@ -563,6 +608,21 @@ async def test_get_spreadsheet_tool(patched_server):
     result = _parse_result(raw)
     assert result["ok"] is True
     assert result["data"]["spreadsheetId"] == "sid"
+
+
+@pytest.mark.anyio
+async def test_find_replace_tool(patched_server):
+    patched_server.find_replace.return_value = {"occurrencesChanged": 3}
+
+    raw = await mcp.call_tool("find_replace", {
+        "spreadsheet_id": "sid",
+        "find": "old",
+        "replacement": "new",
+        "range": "Sheet1!A1:C9",
+    })
+    result = _parse_result(raw)
+    assert result["ok"] is True
+    assert result["data"]["occurrencesChanged"] == 3
 
 
 class TestSheetsChartExport:

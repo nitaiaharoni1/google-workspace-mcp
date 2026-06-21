@@ -142,6 +142,14 @@ def clear_basic_filter(account: str | None = None, spreadsheet_id: str = "", ran
 
 
 @register(mcp, mutating=True)
+def find_replace(account: str | None = None, spreadsheet_id: str = "", find: str = "", replacement: str = "", range: str | None = None, all_sheets: bool = False, match_case: bool = False, match_entire_cell: bool = False, search_by_regex: bool = False, include_formulas: bool = False) -> dict:
+    """Find and replace text. Scope to a range (A1, e.g. 'Sheet1!A1:C9'), a whole sheet (bare tab name like 'Sheet1'), or set all_sheets=True. search_by_regex treats 'find' as a regex; include_formulas also searches formula text. Returns counts of changes."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.find_replace(spreadsheet_id, find, replacement, range, all_sheets, match_case, match_entire_cell, search_by_regex, include_formulas))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
 def merge_cells(account: str | None = None, spreadsheet_id: str = "", range: str = "", merge_type: str = "MERGE_ALL") -> dict:
     """Merge cells in a range (A1 notation). merge_type is MERGE_ALL/MERGE_COLUMNS/MERGE_ROWS."""
     api, resolved = _api(account)
