@@ -400,6 +400,18 @@ class SheetsAPI:
             spreadsheetId=spreadsheet_id, body={"requests": [req]}
         ).execute()
 
+    def insert_rows(self, spreadsheet_id, range, inherit_from_before=False):
+        return self.insert_dimension(spreadsheet_id, range, "ROWS", inherit_from_before)
+
+    def insert_columns(self, spreadsheet_id, range, inherit_from_before=False):
+        return self.insert_dimension(spreadsheet_id, range, "COLUMNS", inherit_from_before)
+
+    def delete_rows(self, spreadsheet_id, range):
+        return self.delete_dimension(spreadsheet_id, range, "ROWS")
+
+    def delete_columns(self, spreadsheet_id, range):
+        return self.delete_dimension(spreadsheet_id, range, "COLUMNS")
+
     def set_dimension_visibility(self, spreadsheet_id, range, dimension, hidden):
         dim = self._dimension_range(spreadsheet_id, range, dimension)
         req = {"updateDimensionProperties": {"range": dim, "properties": {"hiddenByUser": hidden}, "fields": "hiddenByUser"}}
