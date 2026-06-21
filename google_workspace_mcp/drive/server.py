@@ -224,5 +224,70 @@ def delete_file(account: str | None = None, file_id: str = "") -> dict:
     return ok(resolved, data)
 
 
+# --- batch ---
+def _coalesce_move_items(items, file_ids, new_parent_id):
+    if items:
+        return items
+    if file_ids and new_parent_id:
+        return [{"file_id": fid, "new_parent_id": new_parent_id} for fid in file_ids]
+    raise ValueError(
+        "provide items=[{file_id, new_parent_id}, ...] or file_ids=[...] with new_parent_id"
+    )
+
+
+@register(mcp, mutating=True)
+def batch_move_files(
+    account: str | None = None,
+    items: list | None = None,
+    file_ids: list | None = None,
+    new_parent_id: str | None = None,
+) -> dict:
+    """Move many files in one call.
+
+    Pass items=[{file_id, new_parent_id}, ...] for per-file destinations, or
+    file_ids=[...] with a shared new_parent_id. Per-file errors are reported
+    individually without aborting the rest; returns {total, succeeded, failed, results}.
+    """
+    api, resolved = _api(account)
+    data = run_tool(
+        lambda: api.batch_move_files(_coalesce_move_items(items, file_ids, new_parent_id))
+    )
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def batch_create_folders(account: str | None = None, items: list | None = None) -> dict:
+    """Create many folders in one call.
+
+    items=[{name, parent_id?}, ...]. Returns each created folder's id so you can
+    follow up with batch_move_files. Per-folder errors are reported individually.
+    """
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.batch_create_folders(items or []))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def batch_trash_files(account: str | None = None, file_ids: list | None = None) -> dict:
+    """Trash many files in one call (reversible). file_ids=[...].
+
+    Per-file errors are reported individually; returns {total, succeeded, failed, results}.
+    """
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.batch_trash_files(file_ids or []))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True, destructive=True)
+def batch_delete_files(account: str | None = None, file_ids: list | None = None) -> dict:
+    """Permanently delete many files in one call. file_ids=[...].
+
+    Per-file errors are reported individually; returns {total, succeeded, failed, results}.
+    """
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.batch_delete_files(file_ids or []))
+    return ok(resolved, data)
+
+
 def main():
     mcp.run()

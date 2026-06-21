@@ -277,6 +277,63 @@ def test_delete_file(monkeypatch):
     svc.files().delete.assert_called_with(fileId="F1")
 
 
+def test_batch_move_files(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.files().get().execute.return_value = {"id": "F1", "parents": ["OLD"], "name": "f"}
+    svc.files().update().execute.return_value = {"id": "F1", "parents": ["NEW"], "name": "f"}
+    out = api.batch_move_files([
+        {"file_id": "F1", "new_parent_id": "NEW"},
+        {"file_id": "F2", "new_parent_id": "NEW"},
+    ])
+    assert out["total"] == 2
+    assert out["succeeded"] == 2
+    assert out["failed"] == 0
+    assert all(r["ok"] for r in out["results"])
+
+
+def test_batch_move_files_isolates_per_item_errors(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.files().get().execute.return_value = {"id": "F1", "parents": ["OLD"], "name": "f"}
+    svc.files().update().execute.return_value = {"id": "F1", "parents": ["NEW"], "name": "f"}
+    out = api.batch_move_files([
+        {"file_id": "F1", "new_parent_id": "NEW"},
+        {"file_id": "", "new_parent_id": "NEW"},  # invalid -> isolated failure
+    ])
+    assert out["succeeded"] == 1
+    assert out["failed"] == 1
+    bad = [r for r in out["results"] if not r["ok"]][0]
+    assert "file_id" in bad["error"]
+
+
+def test_batch_move_files_requires_list(monkeypatch):
+    api, _ = _api_with_mock(monkeypatch)
+    with pytest.raises(ValueError, match="non-empty list"):
+        api.batch_move_files([])
+
+
+def test_batch_create_folders(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.files().create().execute.return_value = {"id": "NEW", "name": "X", "parents": ["P"]}
+    out = api.batch_create_folders([{"name": "A"}, {"name": "B", "parent_id": "P"}])
+    assert out["total"] == 2 and out["succeeded"] == 2
+    assert out["results"][0]["id"] == "NEW"
+
+
+def test_batch_trash_files(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.files().update().execute.return_value = {"id": "F1", "trashed": True, "name": "f"}
+    out = api.batch_trash_files(["F1", "F2", "F3"])
+    assert out["total"] == 3 and out["succeeded"] == 3
+
+
+def test_batch_delete_files(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.files().delete().execute.return_value = None
+    out = api.batch_delete_files(["F1", "F2"])
+    assert out["succeeded"] == 2
+    assert all(r["deleted"] for r in out["results"])
+
+
 def test_default_output_path_uses_tempdir(monkeypatch):
     api, svc = _api_with_mock(monkeypatch)
     files = MagicMock()
@@ -320,11 +377,32 @@ async def test_tools_registered_and_account_param():
         "read_file_text", "list_permissions", "upload_file", "update_file_content",
         "create_folder", "move_file", "rename_file", "copy_file", "share_file",
         "trash_file", "delete_file",
+        "batch_move_files", "batch_create_folders", "batch_trash_files", "batch_delete_files",
     ]
     for name in drive_tools:
         assert name in tools, f"missing tool {name}"
         assert "account" in (tools[name].inputSchema or {}).get("properties", {})
     assert {"list_accounts", "whoami", "auth_status"}.issubset(tools)
+
+
+@pytest.mark.anyio
+async def test_batch_move_files_envelope(monkeypatch):
+    fake = SimpleNamespace(
+        batch_move_files=lambda items: {"total": len(items), "succeeded": len(items), "failed": 0, "results": []}
+    )
+    monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
+    env = envelope(await server.mcp.call_tool(
+        "batch_move_files", {"file_ids": ["A", "B"], "new_parent_id": "DEST"}
+    ))
+    assert env["ok"] is True
+    assert env["data"]["total"] == 2
+
+
+@pytest.mark.anyio
+async def test_batch_delete_files_marked_destructive():
+    tools = {t.name: t for t in await server.mcp.list_tools()}
+    desc = (tools["batch_delete_files"].description or "").lower()
+    assert "destructive" in desc
 
 
 @pytest.mark.anyio

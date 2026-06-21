@@ -314,3 +314,84 @@ class DriveAPI:
     def delete_file(self, file_id: str):
         self._files().delete(fileId=file_id).execute()
         return {"fileId": file_id, "deleted": True}
+
+    # --- batch helpers ---
+    @staticmethod
+    def _run_batch(items, fn):
+        """Apply ``fn`` to each item, isolating per-item failures.
+
+        Returns a summary with a per-item result list; a single bad item is
+        reported as ``{"ok": False, "error": ...}`` instead of aborting the rest.
+        """
+        results = []
+        succeeded = 0
+        for item in items:
+            try:
+                res = fn(item)
+                results.append({"ok": True, **res})
+                succeeded += 1
+            except core.GoogleCoreError as e:
+                results.append({"ok": False, "error": str(e), "item": item})
+            except Exception as e:  # noqa: BLE001 - normalize to a readable message
+                results.append({"ok": False, "error": str(core.map_exception(e)), "item": item})
+        return {
+            "total": len(items),
+            "succeeded": succeeded,
+            "failed": len(items) - succeeded,
+            "results": results,
+        }
+
+    def batch_move_files(self, items):
+        """Move many files. ``items``: list of ``{file_id, new_parent_id}``."""
+        if not isinstance(items, list) or not items:
+            raise ValueError(
+                "batch_move_files requires a non-empty list of {file_id, new_parent_id}"
+            )
+
+        def _one(item):
+            file_id = item.get("file_id")
+            new_parent_id = item.get("new_parent_id")
+            if not file_id or not new_parent_id:
+                raise ValueError(f"each item needs file_id and new_parent_id; got {item!r}")
+            data = self.move_file(file_id, new_parent_id)
+            return {"file_id": file_id, "name": data.get("name"), "parents": data.get("parents")}
+
+        return self._run_batch(items, _one)
+
+    def batch_create_folders(self, items):
+        """Create many folders. ``items``: list of ``{name, parent_id?}``."""
+        if not isinstance(items, list) or not items:
+            raise ValueError(
+                "batch_create_folders requires a non-empty list of {name, parent_id?}"
+            )
+
+        def _one(item):
+            name = item.get("name")
+            if not name:
+                raise ValueError(f"each item needs a name; got {item!r}")
+            data = self.create_folder(name, parent_id=item.get("parent_id"))
+            return {"id": data.get("id"), "name": data.get("name"), "parents": data.get("parents")}
+
+        return self._run_batch(items, _one)
+
+    def batch_trash_files(self, file_ids):
+        """Trash many files (reversible). ``file_ids``: list of ids."""
+        if not isinstance(file_ids, list) or not file_ids:
+            raise ValueError("batch_trash_files requires a non-empty list of file_ids")
+
+        def _one(file_id):
+            data = self.trash_file(file_id)
+            return {"file_id": file_id, "name": data.get("name"), "trashed": data.get("trashed")}
+
+        return self._run_batch(file_ids, _one)
+
+    def batch_delete_files(self, file_ids):
+        """Permanently delete many files. ``file_ids``: list of ids."""
+        if not isinstance(file_ids, list) or not file_ids:
+            raise ValueError("batch_delete_files requires a non-empty list of file_ids")
+
+        def _one(file_id):
+            self.delete_file(file_id)
+            return {"file_id": file_id, "deleted": True}
+
+        return self._run_batch(file_ids, _one)
