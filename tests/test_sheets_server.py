@@ -476,6 +476,62 @@ class TestSheetsAPIDimensions:
             body={"requests": [{"deleteTable": {"tableId": "table123"}}]},
         )
 
+    def test_update_table_name_only(self, api_with_meta):
+        api, svc = api_with_meta
+        api.update_table("sid", "t1", name="Sales")
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"updateTable": {
+                "table": {"tableId": "t1", "name": "Sales"},
+                "fields": "name",
+            }}]},
+        )
+
+    def test_update_table_recolor_and_columns(self, api_with_meta):
+        api, svc = api_with_meta
+        api.update_table(
+            "sid", "t1",
+            header_color="#FF0000",
+            column_properties=[
+                {"column_index": 2, "column_name": "Status", "column_type": "DROPDOWN", "values": ["Active", "Draft"]},
+                {"column_index": 1, "column_name": "Score", "column_type": "PERCENT"},
+            ],
+        )
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"updateTable": {
+                "table": {
+                    "tableId": "t1",
+                    "rowsProperties": {
+                        "headerColorStyle": {"rgbColor": {"red": 1.0, "green": 0.0, "blue": 0.0}},
+                    },
+                    "columnProperties": [
+                        {"columnIndex": 2, "columnName": "Status", "columnType": "DROPDOWN",
+                         "dataValidationRule": {"condition": {"type": "ONE_OF_LIST", "values": [
+                             {"userEnteredValue": "Active"}, {"userEnteredValue": "Draft"}]}}},
+                        {"columnIndex": 1, "columnName": "Score", "columnType": "PERCENT"},
+                    ],
+                },
+                "fields": "rowsProperties,columnProperties",
+            }}]},
+        )
+
+    def test_update_table_range(self, api_with_meta):
+        api, svc = api_with_meta
+        api.update_table("sid", "t1", range="Tab!A1:D5")
+        body = svc.spreadsheets().batchUpdate.call_args.kwargs["body"]
+        ut = body["requests"][0]["updateTable"]
+        assert ut["fields"] == "range"
+        assert ut["table"]["range"] == {
+            "sheetId": 7, "startColumnIndex": 0, "endColumnIndex": 4,
+            "startRowIndex": 0, "endRowIndex": 5,
+        }
+
+    def test_update_table_requires_a_field(self, api_with_meta):
+        api, _ = api_with_meta
+        with pytest.raises(ValueError):
+            api.update_table("sid", "t1")
+
     def test_filter_spec_requires_criteria(self, api_with_meta):
         api, _ = api_with_meta
         with pytest.raises(ValueError, match="filter_spec"):
@@ -745,6 +801,20 @@ async def test_delete_table_tool(patched_server):
     result = _parse_result(raw)
     assert result["ok"] is True
     patched_server.delete_table.assert_called_with("sid", "table123")
+
+
+@pytest.mark.anyio
+async def test_update_table_tool(patched_server):
+    patched_server.update_table.return_value = {"replies": [{}]}
+
+    raw = await mcp.call_tool("update_table", {
+        "spreadsheet_id": "sid",
+        "table_id": "t1",
+        "name": "Sales",
+    })
+    result = _parse_result(raw)
+    assert result["ok"] is True
+    assert result["data"] == {"replies": [{}]}
 
 
 class TestSheetsChartExport:

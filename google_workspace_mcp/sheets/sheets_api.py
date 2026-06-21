@@ -452,6 +452,45 @@ class SheetsAPI:
     def delete_table(self, spreadsheet_id, table_id):
         return self._batch(spreadsheet_id, [{"deleteTable": {"tableId": table_id}}])
 
+    def _build_table_columns(self, specs):
+        cols = []
+        for s in specs:
+            col = {"columnIndex": s["column_index"]}
+            if s.get("column_name") is not None:
+                col["columnName"] = s["column_name"]
+            if s.get("column_type") is not None:
+                col["columnType"] = s["column_type"]
+            if s.get("values"):
+                col["dataValidationRule"] = {"condition": {
+                    "type": "ONE_OF_LIST",
+                    "values": [{"userEnteredValue": str(v)} for v in s["values"]],
+                }}
+            cols.append(col)
+        return cols
+
+    def update_table(self, spreadsheet_id, table_id, name=None, range=None,
+                     header_color=None, first_band_color=None, second_band_color=None,
+                     footer_color=None, column_properties=None):
+        table = {"tableId": table_id}
+        fields = []
+        if name is not None:
+            table["name"] = name
+            fields.append("name")
+        if range is not None:
+            table["range"] = self._a1_to_grid_range(spreadsheet_id, range)
+            fields.append("range")
+        if any(c is not None for c in (header_color, first_band_color, second_band_color, footer_color)):
+            table["rowsProperties"] = self._banding_properties(
+                header_color, first_band_color, second_band_color, footer_color,
+            )
+            fields.append("rowsProperties")
+        if column_properties is not None:
+            table["columnProperties"] = self._build_table_columns(column_properties)
+            fields.append("columnProperties")
+        if not fields:
+            raise ValueError("update_table requires at least one field to update")
+        return self._batch(spreadsheet_id, [{"updateTable": {"table": table, "fields": ",".join(fields)}}])
+
     def format_table(self, spreadsheet_id, range, header_color="#355468", header_text_color="#FFFFFF",
                      first_band_color="#FFFFFF", second_band_color="#F3F3F3", wrap=True, auto_resize_columns=True,
                      add_filter=True, add_borders=True, freeze_header=True):

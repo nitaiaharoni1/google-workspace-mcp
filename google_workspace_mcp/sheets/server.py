@@ -318,6 +318,14 @@ def delete_table(account: str | None = None, spreadsheet_id: str = "", table_id:
 
 
 @register(mcp, mutating=True)
+def update_table(account: str | None = None, spreadsheet_id: str = "", table_id: str = "", name: str | None = None, range: str | None = None, header_color: str | None = None, first_band_color: str | None = None, second_band_color: str | None = None, footer_color: str | None = None, column_properties: list[dict] | None = None) -> dict:
+    """Update an existing native table's settings by tableId. name renames it; range (A1) resizes/moves it; header/first_band/second_band/footer_color recolor it (hex). column_properties sets per-column settings: [{column_index, column_name, column_type, values}] where column_type is TEXT/DOUBLE/PERCENT/DATE/BOOLEAN/DROPDOWN and values builds a dropdown."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.update_table(spreadsheet_id, table_id, name, range, header_color, first_band_color, second_band_color, footer_color, column_properties))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
 def format_table(account: str | None = None, spreadsheet_id: str = "", range: str = "", header_color: str = "#355468", header_text_color: str = "#FFFFFF", first_band_color: str = "#FFFFFF", second_band_color: str = "#F3F3F3", wrap: bool = True, auto_resize_columns: bool = True, add_filter: bool = True, add_borders: bool = True, freeze_header: bool = True) -> dict:
     """One-shot table styling: formatted header, alternating row colors, text wrap, auto column width, filter dropdowns, borders, and frozen header row."""
     api, resolved = _api(account)
