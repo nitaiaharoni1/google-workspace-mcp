@@ -150,6 +150,22 @@ def find_replace(account: str | None = None, spreadsheet_id: str = "", find: str
 
 
 @register(mcp, mutating=True)
+def copy_paste(account: str | None = None, spreadsheet_id: str = "", source_range: str = "", destination_range: str = "", paste_type: str = "PASTE_NORMAL", transpose: bool = False) -> dict:
+    """Copy a range (A1) to a destination range, within or across sheets (use a sheet prefix in either A1). paste_type: PASTE_NORMAL/PASTE_VALUES/PASTE_FORMAT/PASTE_FORMULA/PASTE_NO_BORDERS/PASTE_DATA_VALIDATION/PASTE_CONDITIONAL_FORMATTING. transpose=True flips rows and columns."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.copy_paste(spreadsheet_id, source_range, destination_range, paste_type, transpose))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True, destructive=True)
+def cut_paste(account: str | None = None, spreadsheet_id: str = "", source_range: str = "", destination: str = "", paste_type: str = "PASTE_NORMAL") -> dict:
+    """Move a range (A1) to a destination anchor cell (single cell A1, e.g. 'Sheet2!A1'), clearing the source. paste_type matches copy_paste."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.cut_paste(spreadsheet_id, source_range, destination, paste_type))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
 def merge_cells(account: str | None = None, spreadsheet_id: str = "", range: str = "", merge_type: str = "MERGE_ALL") -> dict:
     """Merge cells in a range (A1 notation). merge_type is MERGE_ALL/MERGE_COLUMNS/MERGE_ROWS."""
     api, resolved = _api(account)

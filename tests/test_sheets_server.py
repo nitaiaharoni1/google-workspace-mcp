@@ -357,6 +357,42 @@ class TestSheetsAPIDimensions:
         with pytest.raises(ValueError):
             api.find_replace("sid", "old", "new")
 
+    def test_copy_paste_values(self, api_with_meta):
+        api, svc = api_with_meta
+        api.copy_paste("sid", "Tab!A1:B2", "Tab!D1:E2", paste_type="PASTE_VALUES")
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"copyPaste": {
+                "source": {"sheetId": 7, "startColumnIndex": 0, "endColumnIndex": 2,
+                           "startRowIndex": 0, "endRowIndex": 2},
+                "destination": {"sheetId": 7, "startColumnIndex": 3, "endColumnIndex": 5,
+                                "startRowIndex": 0, "endRowIndex": 2},
+                "pasteType": "PASTE_VALUES",
+                "pasteOrientation": "NORMAL",
+            }}]},
+        )
+
+    def test_copy_paste_transpose(self, api_with_meta):
+        api, svc = api_with_meta
+        api.copy_paste("sid", "Tab!A1:B2", "Tab!D1:E2", transpose=True)
+        body = svc.spreadsheets().batchUpdate.call_args.kwargs["body"]
+        cp = body["requests"][0]["copyPaste"]
+        assert cp["pasteType"] == "PASTE_NORMAL"
+        assert cp["pasteOrientation"] == "TRANSPOSE"
+
+    def test_cut_paste(self, api_with_meta):
+        api, svc = api_with_meta
+        api.cut_paste("sid", "Tab!A1:B2", "Tab!D1")
+        svc.spreadsheets().batchUpdate.assert_called_with(
+            spreadsheetId="sid",
+            body={"requests": [{"cutPaste": {
+                "source": {"sheetId": 7, "startColumnIndex": 0, "endColumnIndex": 2,
+                           "startRowIndex": 0, "endRowIndex": 2},
+                "destination": {"sheetId": 7, "rowIndex": 0, "columnIndex": 3},
+                "pasteType": "PASTE_NORMAL",
+            }}]},
+        )
+
     def test_format_cells_wrap_and_vertical(self, api_with_meta):
         api, svc = api_with_meta
         api.format_cells("sid", "Tab!A1", wrap=True, vertical_alignment="TOP", strikethrough=True)
@@ -623,6 +659,34 @@ async def test_find_replace_tool(patched_server):
     result = _parse_result(raw)
     assert result["ok"] is True
     assert result["data"]["occurrencesChanged"] == 3
+
+
+@pytest.mark.anyio
+async def test_copy_paste_tool(patched_server):
+    patched_server.copy_paste.return_value = {"replies": [{}]}
+
+    raw = await mcp.call_tool("copy_paste", {
+        "spreadsheet_id": "sid",
+        "source_range": "Sheet1!A1:B2",
+        "destination_range": "Sheet1!D1:E2",
+    })
+    result = _parse_result(raw)
+    assert result["ok"] is True
+    assert result["data"] == {"replies": [{}]}
+
+
+@pytest.mark.anyio
+async def test_cut_paste_tool(patched_server):
+    patched_server.cut_paste.return_value = {"replies": [{}]}
+
+    raw = await mcp.call_tool("cut_paste", {
+        "spreadsheet_id": "sid",
+        "source_range": "Sheet1!A1:B2",
+        "destination": "Sheet1!D1",
+    })
+    result = _parse_result(raw)
+    assert result["ok"] is True
+    assert result["data"] == {"replies": [{}]}
 
 
 class TestSheetsChartExport:

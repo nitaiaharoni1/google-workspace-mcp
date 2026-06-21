@@ -147,6 +147,14 @@ class SheetsAPI:
         _, _, grid, _, _, _, _ = self._resolve_a1(spreadsheet_id, a1, meta)
         return grid
 
+    def _a1_to_grid_coordinate(self, spreadsheet_id, a1, meta=None):
+        _, sheet_id, grid, _, _, _, _ = self._resolve_a1(spreadsheet_id, a1, meta)
+        return {
+            "sheetId": sheet_id,
+            "rowIndex": grid.get("startRowIndex", 0),
+            "columnIndex": grid.get("startColumnIndex", 0),
+        }
+
     def _format_cells_request(self, grid, bold=None, italic=None, strikethrough=None, underline=None,
                               font_size=None, text_color=None, background_color=None, number_format=None,
                               horizontal_alignment=None, vertical_alignment=None, wrap=None):
@@ -320,6 +328,26 @@ class SheetsAPI:
         else:
             raise ValueError("find_replace requires range or all_sheets=True")
         return self._batch(spreadsheet_id, [{"findReplace": fr}])
+
+    def copy_paste(self, spreadsheet_id, source_range, destination_range,
+                   paste_type="PASTE_NORMAL", transpose=False):
+        meta = self.get_spreadsheet(spreadsheet_id)
+        req = {"copyPaste": {
+            "source": self._a1_to_grid_range(spreadsheet_id, source_range, meta),
+            "destination": self._a1_to_grid_range(spreadsheet_id, destination_range, meta),
+            "pasteType": paste_type,
+            "pasteOrientation": "TRANSPOSE" if transpose else "NORMAL",
+        }}
+        return self._batch(spreadsheet_id, [req])
+
+    def cut_paste(self, spreadsheet_id, source_range, destination, paste_type="PASTE_NORMAL"):
+        meta = self.get_spreadsheet(spreadsheet_id)
+        req = {"cutPaste": {
+            "source": self._a1_to_grid_range(spreadsheet_id, source_range, meta),
+            "destination": self._a1_to_grid_coordinate(spreadsheet_id, destination, meta),
+            "pasteType": paste_type,
+        }}
+        return self._batch(spreadsheet_id, [req])
 
     def merge_cells(self, spreadsheet_id, range, merge_type="MERGE_ALL"):
         grid = self._a1_to_grid_range(spreadsheet_id, range)
