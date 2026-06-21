@@ -9,7 +9,7 @@ identically and support:
 - **Multiple accounts in parallel**: every tool takes an `account` argument
   (email or alias). Calls for different accounts use separate, cached clients and
   never interfere.
-- **Many operations**: ~36 Gmail tools, ~22 Calendar tools, ~11 Sheets tools,
+- **Many operations**: ~36 Gmail tools, ~22 Calendar tools, ~41 Sheets tools (incl. text editing),
   ~25 Docs tools, ~16 Drive tools, plus shared `list_accounts` / `whoami` /
   `auth_status` on every server.
 

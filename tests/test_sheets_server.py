@@ -582,7 +582,8 @@ async def test_list_tools_includes_expected(patched_server):
         "set_borders", "set_data_validation", "duplicate_sheet",
         "format_cells", "sort_range", "set_basic_filter", "clear_basic_filter",
         "merge_cells", "unmerge_cells", "add_banding", "update_banding", "delete_banding",
-        "add_table", "format_table", "read_formulas", "write_formulas",
+        "add_table", "update_table", "delete_table", "format_table", "read_formulas", "write_formulas",
+        "find_replace", "copy_paste", "cut_paste", "hide_columns", "hide_rows",
         # common tools
         "list_accounts", "auth_status", "whoami",
     }
