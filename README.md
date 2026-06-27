@@ -41,8 +41,15 @@ pip install google-workspace-suite-mcp
 
 This pulls in the shared `google-auth-core` token store and the
 `gmail-cli-oauth` / `google-calendar-cli` clients automatically, and installs
-the five `*-mcp` console scripts (`gmail-mcp`, `gcal-mcp`, `gsheets-mcp`,
-`gdocs-mcp`, `gdrive-mcp`) onto your PATH.
+six console scripts onto your PATH: the five servers (`gmail-mcp`, `gcal-mcp`,
+`gsheets-mcp`, `gdocs-mcp`, `gdrive-mcp`) plus the `google-auth` CLI used to log
+in (see below).
+
+If you prefer an isolated install with [pipx](https://pipx.pypa.io):
+
+```bash
+pipx install google-workspace-suite-mcp
+```
 
 For local development from a clone:
 
@@ -52,17 +59,41 @@ pip install -e .[dev]
 
 ## Authenticate (once)
 
-Put your OAuth client (Desktop app) at `~/.google/credentials.json`, then:
+Auth is **out-of-band**: the servers are non-interactive token consumers. You
+log in once with the bundled `google-auth` CLI, which writes a unified token to
+`~/.google/`; every server then reads and silently refreshes it.
+
+You bring your **own** Google OAuth client. There is no shared client embedded
+in the package: Gmail and Drive are Google "restricted" scopes, so a shared
+published client would require Google's security assessment. With your own
+client used in "testing" mode (you add yourself as a test user) you skip
+verification entirely.
+
+**1. Create an OAuth client** in the [Google Cloud Console](https://console.cloud.google.com):
+
+- Create or select a project.
+- Enable the APIs you need: Gmail, Google Calendar, Google Sheets, Google Docs,
+  Google Drive.
+- *APIs & Services → OAuth consent screen* → **External** → add your own Google
+  address under **Test users**.
+- *APIs & Services → Credentials → Create credentials → OAuth client ID* →
+  application type **Desktop app** → **Download JSON**.
+- Save that file as `~/.google/credentials.json`.
+
+**2. Log in:**
 
 ```bash
 google-auth login you@example.com      # opens a browser, writes a unified token
 google-auth alias work you@example.com # optional short alias
 google-auth login you@personal.com     # add more accounts
 google-auth list                       # show accounts, default, aliases
+google-auth status                     # show token + scope health
 ```
 
-A single login grants Gmail + Calendar + Sheets + Docs + Drive scopes, shared by both the CLIs
-and the MCP servers.
+A single login grants Gmail + Calendar + Sheets + Docs + Drive scopes, shared by
+both the CLIs and the MCP servers. If a token is ever missing or scope-short, a
+tool returns an actionable error (`Run: google-auth login <account>`) rather
+than blocking the protocol.
 
 ## Register with Claude
 
@@ -80,8 +111,11 @@ and the MCP servers.
 }
 ```
 
-(On this machine they are registered at user scope with absolute venv paths, so
-they are available in every project.)
+Bare command names work when the install location is on your PATH (e.g. a
+`pipx install`, or an activated venv). GUI clients such as Claude Desktop and
+Cursor do not inherit your shell PATH, so give them the absolute path to each
+script instead (`which gmail-mcp` to find it). Register at user scope to make
+the servers available in every project.
 
 Restart Claude after editing.
 
