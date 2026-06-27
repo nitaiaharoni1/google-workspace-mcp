@@ -171,14 +171,17 @@ def send_message(
     body: str = "",
     cc: str | None = None,
     attachments: list[str] | None = None,
+    html: bool = False,
 ) -> dict:
     """Send an email message.
 
     attachments: list of LOCAL file paths to attach (e.g. ["/Users/me/deck.pdf"]).
     The files are read from disk on the server, so large binaries are fine.
+    html: set True to send `body` as HTML (inline images via <img src>, links,
+    formatting). A plain-text fallback is generated automatically.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.send_message(to=to, subject=subject, body=body, cc=cc, attachments=attachments))
+    data = run_tool(lambda: api.send_message(to=to, subject=subject, body=body, cc=cc, attachments=attachments, html=html))
     return ok(resolved, data)
 
 
@@ -246,13 +249,16 @@ def create_draft(
     body: str = "",
     cc: str | None = None,
     attachments: list[str] | None = None,
+    html: bool = False,
 ) -> dict:
     """Create a draft message (supports cc + attachments together).
 
     attachments: list of LOCAL file paths to attach (read from disk server-side).
+    html: set True to store `body` as HTML (inline images via <img src>, links,
+    formatting). A plain-text fallback is generated automatically.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.create_draft(to=to, subject=subject, body=body, cc=cc, attachments=attachments))
+    data = run_tool(lambda: api.create_draft(to=to, subject=subject, body=body, cc=cc, attachments=attachments, html=html))
     return ok(resolved, data)
 
 
@@ -265,6 +271,7 @@ def update_draft(
     body: str | None = None,
     cc: str | None = None,
     attachments: list[str] | None = None,
+    html: bool = False,
 ) -> dict:
     """Update an existing draft, preserving fields you don't pass.
 
@@ -272,9 +279,11 @@ def update_draft(
     kept otherwise (e.g. pass only `attachments` to add a file without wiping the
     rest). Pass `attachments` to replace the file set; omit it to keep existing.
     attachments: list of LOCAL file paths (read from disk server-side).
+    html: set True when `body` is HTML (inline images via <img src>, links,
+    formatting). A plain-text fallback is generated automatically.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.update_draft(draft_id, to=to, subject=subject, body=body, cc=cc, attachments=attachments))
+    data = run_tool(lambda: api.update_draft(draft_id, to=to, subject=subject, body=body, cc=cc, attachments=attachments, html=html))
     return ok(resolved, data)
 
 

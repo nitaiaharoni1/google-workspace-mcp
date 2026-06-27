@@ -1,19 +1,19 @@
 {
   "mcpServers": {
     "google-gmail": {
-      "command": "/Users/nitai/REPOS/google-workspace-mcp/.venv/bin/gmail-mcp"
+      "command": "gmail-mcp"
     },
     "google-calendar": {
-      "command": "/Users/nitai/REPOS/google-workspace-mcp/.venv/bin/gcal-mcp"
+      "command": "gcal-mcp"
     },
     "google-sheets": {
-      "command": "/Users/nitai/REPOS/google-workspace-mcp/.venv/bin/gsheets-mcp"
+      "command": "gsheets-mcp"
     },
     "google-docs": {
-      "command": "/Users/nitai/REPOS/google-workspace-mcp/.venv/bin/gdocs-mcp"
+      "command": "gdocs-mcp"
     },
     "google-drive": {
-      "command": "/Users/nitai/REPOS/google-workspace-mcp/.venv/bin/gdrive-mcp"
+      "command": "gdrive-mcp"
     }
   }
 }

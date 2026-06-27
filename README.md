@@ -36,8 +36,18 @@ runs the Google call through shared error mapping, and returns
 ## Install
 
 ```bash
-pip install google-auth-core gmail-cli google-calendar-cli
-pip install -e .            # this repo
+pip install google-workspace-suite-mcp
+```
+
+This pulls in the shared `google-auth-core` token store and the
+`gmail-cli-oauth` / `google-calendar-cli` clients automatically, and installs
+the five `*-mcp` console scripts (`gmail-mcp`, `gcal-mcp`, `gsheets-mcp`,
+`gdocs-mcp`, `gdrive-mcp`) onto your PATH.
+
+For local development from a clone:
+
+```bash
+pip install -e .[dev]
 ```
 
 ## Authenticate (once)
