@@ -74,8 +74,8 @@ class FakeAPI:
         return {"id": filter_id}
 
     # WRITE methods
-    def send_message(self, to, subject, body, attachments=None, cc=None):
-        self._record("send_message", to=to, subject=subject, body=body, cc=cc)
+    def send_message(self, to, subject, body, attachments=None, cc=None, html=False):
+        self._record("send_message", to=to, subject=subject, body=body, cc=cc, html=html)
         return {"id": "sent1", "threadId": "t1"}
 
     def reply_to_message(self, message_id, body, reply_all=False, additional_cc=None):
@@ -86,12 +86,12 @@ class FakeAPI:
         self._record("forward_message", message_id=message_id, to=to, body=body)
         return {"id": "sent3"}
 
-    def create_draft(self, to, subject, body, attachments=None):
-        self._record("create_draft", to=to, subject=subject, body=body)
+    def create_draft(self, to, subject, body, attachments=None, cc=None, html=False):
+        self._record("create_draft", to=to, subject=subject, body=body, cc=cc, html=html)
         return {"id": "draft_new"}
 
-    def update_draft(self, draft_id, to, subject, body, attachments=None):
-        self._record("update_draft", draft_id=draft_id, to=to, subject=subject, body=body)
+    def update_draft(self, draft_id, to=None, subject=None, body=None, attachments=None, cc=None, html=False):
+        self._record("update_draft", draft_id=draft_id, to=to, subject=subject, body=body, cc=cc, html=html)
         return {"id": draft_id}
 
     def modify_message(self, message_id, add_label_ids=None, remove_label_ids=None):
