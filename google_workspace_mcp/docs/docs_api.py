@@ -22,6 +22,8 @@ NUMBERED_BULLET_PRESETS = {
     "NUMBERED_ZERODECIMAL_ALPHA_ROMAN",
 }
 
+DOCUMENT_MIME = "application/vnd.google-apps.document"
+
 
 class DocsAPI:
     def __init__(self, account=None):
@@ -558,8 +560,66 @@ class DocsAPI:
         location = {"segmentId": footer_id, "index": index}
         return self._batch(document_id, [{"insertPageNumber": {"location": location}}])
 
+    # --- markdown (via Drive import/export conversion) ---
+
+    def _drive(self, account=None):
+        return core.get_service("drive", "v3", account=account or self.account)
+
+    def _markdown_media(self, markdown):
+        return MediaIoBaseUpload(
+            io.BytesIO(markdown.encode("utf-8")), mimetype="text/markdown", resumable=True
+        )
+
+    def create_document_from_markdown(self, title, markdown, folder_id=None):
+        """Create a Google Doc by importing markdown (Drive converts it to native formatting)."""
+        body = {"name": title, "mimeType": DOCUMENT_MIME}
+        if folder_id:
+            body["parents"] = [folder_id]
+        created = self._drive().files().create(
+            body=body,
+            media_body=self._markdown_media(markdown),
+            fields="id, name, mimeType, webViewLink",
+        ).execute()
+        return {
+            "documentId": created.get("id"),
+            "title": created.get("name"),
+            "webViewLink": created.get("webViewLink"),
+        }
+
+    def replace_document_with_markdown(self, document_id, markdown):
+        """Replace a document's entire content by re-importing markdown."""
+        updated = self._drive().files().update(
+            fileId=document_id,
+            media_body=self._markdown_media(markdown),
+            fields="id, name, mimeType",
+        ).execute()
+        return {
+            "documentId": updated.get("id"),
+            "title": updated.get("name"),
+            "replaced": True,
+        }
+
+    def read_document_as_markdown(self, document_id):
+        """Export a document as markdown text."""
+        data = self._drive().files().export(
+            fileId=document_id, mimeType="text/markdown"
+        ).execute()
+        text = data.decode("utf-8") if isinstance(data, (bytes, bytearray)) else str(data)
+        return {"documentId": document_id, "markdown": text}
+
+    def append_markdown(self, document_id, markdown):
+        """Append markdown by exporting the doc as markdown, concatenating, and re-importing.
+
+        The whole document round-trips through markdown, so elements markdown
+        cannot express (comments, suggestions, positioned images) are lost.
+        """
+        current = self.read_document_as_markdown(document_id)["markdown"]
+        combined = markdown if not current.strip() else current.rstrip("\n") + "\n\n" + markdown
+        updated = self.replace_document_with_markdown(document_id, combined)
+        return {"documentId": document_id, "title": updated.get("title"), "appended": True}
+
     def _upload_public_image_uri(self, image_bytes, name="chart.png", account=None):
-        drive = core.get_service("drive", "v3", account=account or self.account)
+        drive = self._drive(account)
         media = MediaIoBaseUpload(io.BytesIO(image_bytes), mimetype="image/png", resumable=True)
         created = drive.files().create(
             body={"name": name},

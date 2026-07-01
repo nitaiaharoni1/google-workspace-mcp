@@ -381,6 +381,72 @@ def test_get_chart_image_url():
     assert url == "https://docs.google.com/spreadsheets/d/abc/chart?oid=999&format=image"
 
 
+def test_create_document_from_markdown(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.files().create().execute.return_value = {
+        "id": "D9", "name": "Spec",
+        "mimeType": "application/vnd.google-apps.document",
+        "webViewLink": "https://docs.google.com/document/d/D9",
+    }
+    out = api.create_document_from_markdown("Spec", "# Title\n\nBody", folder_id="F1")
+    assert out["documentId"] == "D9"
+    assert out["title"] == "Spec"
+    _, kwargs = svc.files().create.call_args
+    assert kwargs["body"] == {
+        "name": "Spec",
+        "mimeType": "application/vnd.google-apps.document",
+        "parents": ["F1"],
+    }
+    assert kwargs["media_body"].mimetype() == "text/markdown"
+
+
+def test_create_document_from_markdown_no_folder(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.files().create().execute.return_value = {"id": "D9", "name": "Spec"}
+    api.create_document_from_markdown("Spec", "# T")
+    _, kwargs = svc.files().create.call_args
+    assert "parents" not in kwargs["body"]
+
+
+def test_replace_document_with_markdown(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.files().update().execute.return_value = {"id": "D1", "name": "Doc"}
+    out = api.replace_document_with_markdown("D1", "# New")
+    assert out == {"documentId": "D1", "title": "Doc", "replaced": True}
+    _, kwargs = svc.files().update.call_args
+    assert kwargs["fileId"] == "D1"
+    assert kwargs["media_body"].mimetype() == "text/markdown"
+
+
+def test_read_document_as_markdown(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.files().export().execute.return_value = b"# Hi\n"
+    out = api.read_document_as_markdown("D1")
+    assert out == {"documentId": "D1", "markdown": "# Hi\n"}
+    svc.files().export.assert_called_with(fileId="D1", mimeType="text/markdown")
+
+
+def test_append_markdown_round_trips(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.files().export().execute.return_value = b"# Existing\n\nBody\n"
+    svc.files().update().execute.return_value = {"id": "D1", "name": "Doc"}
+    out = api.append_markdown("D1", "## Added")
+    assert out == {"documentId": "D1", "title": "Doc", "appended": True}
+    _, kwargs = svc.files().update.call_args
+    media = kwargs["media_body"]
+    assert media.getbytes(0, media.size()) == b"# Existing\n\nBody\n\n## Added"
+
+
+def test_append_markdown_to_empty_doc(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.files().export().execute.return_value = b"\n"
+    svc.files().update().execute.return_value = {"id": "D1", "name": "Doc"}
+    api.append_markdown("D1", "# First")
+    _, kwargs = svc.files().update.call_args
+    media = kwargs["media_body"]
+    assert media.getbytes(0, media.size()) == b"# First"
+
+
 # --- server tools (mocked _api) ---
 
 @pytest.mark.anyio
