@@ -11,10 +11,12 @@ from mcp.types import TextContent
 
 from google_workspace_mcp.drive import server
 from google_workspace_mcp.drive.drive_api import (
+    DOCUMENT_MIME,
     EXPORT_FORMATS,
     TEXT_READ_MAX_BYTES,
     DriveAPI,
     _resolve_export_mime,
+    _resolve_upload_mimes,
 )
 
 
@@ -232,7 +234,12 @@ def test_upload_file_converts_to_google_doc(monkeypatch, tmp_path):
     assert kwargs["body"]["mimeType"] == "application/vnd.google-apps.document"
     assert kwargs["body"]["name"] == "Acquisition Meetings Plan"
     assert kwargs["body"]["parents"] == ["P1"]
-    assert kwargs["media_body"].mimetype() == "text/plain"
+    assert kwargs["media_body"].mimetype() == "text/markdown"
+
+
+def test_resolve_upload_mimes_markdown():
+    target, media = _resolve_upload_mimes("plan.md", DOCUMENT_MIME)
+    assert (target, media) == (DOCUMENT_MIME, "text/markdown")
 
 
 def test_upload_file_rejects_folder_target(monkeypatch, tmp_path):

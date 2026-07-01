@@ -18,8 +18,8 @@ PRESENTATION_MIME = "application/vnd.google-apps.presentation"
 
 # Local extensions -> source media mime when converting into Google-native files.
 CONVERSION_SOURCE_MIMES: dict[str, str] = {
-    ".md": "text/plain",
-    ".markdown": "text/plain",
+    ".md": "text/markdown",
+    ".markdown": "text/markdown",
     ".txt": "text/plain",
     ".html": "text/html",
     ".htm": "text/html",
