@@ -616,7 +616,7 @@ class SheetsAPI:
             requests.extend(layout)
         if freeze_header:
             requests.append({"updateSheetProperties": {
-                "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 1}},
+                "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": start_row}},
                 "fields": "gridProperties.frozenRowCount",
             }})
         result = self._batch(spreadsheet_id, requests)

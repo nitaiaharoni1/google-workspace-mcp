@@ -525,6 +525,16 @@ class TestSheetsAPIDimensions:
         frozen = [r for r in requests if "updateSheetProperties" in r]
         assert frozen[0]["updateSheetProperties"]["properties"]["gridProperties"] == {"frozenRowCount": 1}
 
+    def test_format_table_freeze_header_uses_range_start_row(self, api_with_meta):
+        api, svc = api_with_meta
+        svc.spreadsheets().values().get.return_value.execute.return_value = {
+            "values": [["H1", "H2"], ["v1", "v2"]],
+        }
+        api.format_table("sid", "Tab!A5:B6", freeze_header=True)
+        requests = svc.spreadsheets().batchUpdate.call_args.kwargs["body"]["requests"]
+        frozen = [r for r in requests if "updateSheetProperties" in r]
+        assert frozen[0]["updateSheetProperties"]["properties"]["gridProperties"] == {"frozenRowCount": 5}
+
     def test_format_table_no_auto_resize_uses_blanket_wrap(self, api_with_meta):
         api, svc = api_with_meta
         result = api.format_table("sid", "Tab!A1:B3", auto_resize_columns=False)
