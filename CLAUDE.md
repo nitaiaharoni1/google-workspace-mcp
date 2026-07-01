@@ -1,0 +1,84 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+One PyPI distribution (`google-workspace-suite-mcp`) that ships **five aligned MCP servers** for Google Workspace (Gmail, Calendar, Sheets, Docs, Drive) plus the `google-auth` login CLI. The five servers are separate console-script entry points but share one runtime `core/` and one on-disk credential store, which is what keeps them behaving identically.
+
+## Commands
+
+```bash
+pip install -e .[dev]      # editable install with test deps
+pytest                     # full suite: unit + protocol (in-memory) + isolation + persistence
+ruff check .               # minimal lint (import order, syntax, pyflakes)
+pytest tests/test_sheets_server.py            # one file
+pytest tests/test_sheets_server.py -k read_range   # one test by name
+GOOGLE_MCP_LIVE=1 pytest   # opt-in live smoke tests; hit real Google APIs, never run in CI
+```
+
+There is no separate typecheck step. CI runs `pytest` and `ruff check` on push/PR to `main` (Python 3.10–3.13); that is the gate.
+
+Build/release (maintainer): tag `v*` matching `pyproject.toml` version triggers GitHub Actions Trusted Publishing to PyPI. Local `python -m build` plus Keychain token remains a fallback for emergencies.
+
+## Architecture
+
+```
+google-auth-core (external dep)   shared ~/.google token store + authorized-service cache
+                                  (also powers gmail-cli-oauth and google-calendar-cli)
+        v
+google_workspace_mcp/
+  core/      build_server, get_api (account resolution + warm-client cache),
+             run_tool (error mapping), register (read-only gate), ok (envelope),
+             common_tools (list_accounts / whoami / auth_status)
+  gmail/     server.py + changes_api.GmailChangesAPI (subclass)  -> gmail-mcp
+  calendar/  server.py + changes_api.CalendarChangesAPI        -> gcal-mcp
+  sheets/    server.py + sheets_api.SheetsAPI (Sheets v4)      -> gsheets-mcp
+  docs/      server.py + docs_api.DocsAPI (Docs v1)            -> gdocs-mcp
+  drive/     server.py + drive_api.DriveAPI (Drive v3)         -> gdrive-mcp
+```
+
+Gmail and Calendar reuse the API wrappers from their sibling CLI packages (`gmail_cli`, `google_calendar_cli`); Sheets/Docs/Drive have their own thin wrappers in this repo built on `core.get_service(name, version, account=...)`.
+
+## The core contract every tool follows
+
+Adding or editing a tool means following the exact shape used everywhere (see `sheets/server.py`):
+
+```python
+@register(mcp, mutating=True, destructive=True)   # flags optional; see below
+def some_tool(account: str | None = None, ...) -> dict:
+    """One-line description shown to the model. First line matters."""
+    api, resolved = _api(account)                 # _api = get_api(service, Factory, account)
+    data = run_tool(lambda: api.some_call(...))    # run_tool maps exceptions -> GoogleCoreError
+    return ok(resolved, data)                       # -> {"ok": True, "account": resolved, "data": ...}
+```
+
+Key invariants, all enforced by `core/runtime.py` — do not bypass them:
+
+- **`account` is always the first param**, `str | None`, defaults to the store's default account. It may be an email or an alias; `get_api` resolves it.
+- **Never build a service client directly in a tool.** Always go through `_api(account)` → `get_api`, which caches one client per `(service, resolved_account)`. This is what guarantees the headline feature: parallel accounts never interfere. A new client type is constructed once and reused for the life of the server.
+- **Wrap the actual Google call in `run_tool(lambda: ...)`** so failures become the shared `GoogleCoreError` taxonomy (missing/expired creds produce actionable `Run: google-auth login <account>` messages).
+- **Return via `ok(resolved, data)`** — return the *resolved* account, not the raw `account` arg.
+
+## The read-only gate and destructive markers
+
+`@register` (in `core/runtime.py`) is the only way to register a tool, and its flags drive two behaviors:
+
+- `mutating=True` — the tool is **not registered at all** when `GOOGLE_MCP_READONLY` env is set (`1/true/yes/on`). It never appears in `list_tools`. Read tools use bare `@register(mcp)`.
+- `destructive=True` — appends a `[DESTRUCTIVE]` warning to the tool's docstring/description. Deletes, clears, and permanent changes use `mutating=True, destructive=True`.
+
+`READONLY` is read once at import, so servers must be launched with the env already set. When adding a write/delete tool, set these flags or it will leak into read-only mode.
+
+## Tests
+
+- `tests/conftest.py` provides `store_env` (points the token store at a temp `~/.google` and clears the api cache) and `write_token` (writes a fake unified token + registers the account). Use these for anything touching auth.
+- Server tests inject a **FakeAPI** (see `test_gmail_server.py`) or `patch("google_auth_core.get_service", ...)` (see `test_sheets_server.py`) — they never hit the network. The FakeAPI's method signatures must stay in sync with the real wrapper; `tests/test_fake_drift.py` enforces parity for hand-written fakes, and calendar/sheets/docs/drive server mocks use `MagicMock(spec=...)`.
+- `test_integration.py` holds the cross-cutting guarantees: multi-account isolation under concurrency, credential persistence across a simulated restart (interactive auth must never run in a server), the read-only gate, and that all five servers expose the common tools. Treat these as the spec.
+
+## Auth model (important context)
+
+Auth is **out-of-band**. The servers are non-interactive token *consumers*: they read and silently refresh tokens from `~/.google/` but never run an OAuth flow. Login happens separately via the `google-auth` CLI (from `google-auth-core`). Users bring their own Google OAuth desktop client at `~/.google/credentials.json`. If a tool ever tries to trigger interactive auth inside a server, that's a bug (`test_integration.py` asserts against it).
+
+## Design docs
+
+`docs/superpowers/specs/` and `docs/superpowers/plans/` hold the design specs and implementation plans (e.g. the Drive server, Sheets content/text editing). Read the relevant spec before extending a subsystem it covers.

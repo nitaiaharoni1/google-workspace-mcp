@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from google_workspace_mcp.calendar import server
+from google_workspace_mcp.calendar.changes_api import CalendarChangesAPI
 
 
 @pytest.fixture
@@ -17,7 +18,7 @@ def anyio_backend():
 @pytest.fixture(autouse=True)
 def fake_api(monkeypatch):
     """Monkeypatch _api so no real auth or network calls occur."""
-    fake = MagicMock()
+    fake = MagicMock(spec=CalendarChangesAPI)
     monkeypatch.setattr(server, "_api", lambda account=None: (fake, "test@x.com"))
     return fake
 
@@ -42,7 +43,7 @@ EXPECTED_TOOLS = {
     # read
     "get_profile", "list_calendars", "get_calendar", "list_events",
     "search_events", "get_event", "get_recurring_event_instances",
-    "freebusy_query", "find_available_slots", "get_colors",
+    "freebusy_query", "find_available_slots", "get_colors", "list_event_changes",
     # write
     "create_event", "update_event", "quick_add_event", "move_event",
     "add_attendees", "remove_attendees", "propose_new_time",
@@ -62,8 +63,8 @@ async def test_tool_list_includes_expected_names():
 @pytest.mark.anyio
 async def test_tool_count():
     tools = await server.mcp.list_tools()
-    # 3 common + 11 read + 9 write + 3 destructive = 26
-    assert len(tools) == 26
+    # 3 common + 12 read + 9 write + 3 destructive = 27
+    assert len(tools) == 27
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +73,7 @@ async def test_tool_count():
 
 @pytest.mark.anyio
 async def test_list_events_returns_envelope(fake_api):
-    fake_api.list_events.return_value = [{"id": "ev1", "summary": "Standup"}]
+    fake_api.list_events_page.return_value = {"items": [{"id": "ev1", "summary": "Standup"}]}
 
     result = await server.mcp.call_tool(
         "list_events",
@@ -83,11 +84,12 @@ async def test_list_events_returns_envelope(fake_api):
     assert data["ok"] is True
     assert data["account"] == "test@x.com"
     assert data["data"] == [{"id": "ev1", "summary": "Standup"}]
+    assert "next_page_token" not in data
 
 
 @pytest.mark.anyio
 async def test_list_events_passes_args_to_api(fake_api):
-    fake_api.list_events.return_value = []
+    fake_api.list_events_page.return_value = {"items": []}
 
     await server.mcp.call_tool(
         "list_events",
@@ -101,14 +103,37 @@ async def test_list_events_passes_args_to_api(fake_api):
         },
     )
 
-    fake_api.list_events.assert_called_once_with(
+    fake_api.list_events_page.assert_called_once_with(
         calendar_id="work@example.com",
         max_results=20,
         time_min="2025-01-01T00:00:00Z",
         time_max="2025-01-31T23:59:59Z",
         single_events=True,
         order_by="startTime",
+        page_token=None,
     )
+
+
+@pytest.mark.anyio
+async def test_list_events_next_page_token_in_envelope(fake_api):
+    fake_api.list_events_page.return_value = {
+        "items": [{"id": "ev1"}],
+        "nextPageToken": "cal_tok_2",
+    }
+
+    data = _parse(await server.mcp.call_tool("list_events", {"max_results": 1}))
+
+    assert data["next_page_token"] == "cal_tok_2"
+
+
+@pytest.mark.anyio
+async def test_list_events_page_token_passed_through(fake_api):
+    fake_api.list_events_page.return_value = {"items": []}
+
+    await server.mcp.call_tool("list_events", {"page_token": "cal_tok_2"})
+
+    fake_api.list_events_page.assert_called_once()
+    assert fake_api.list_events_page.call_args.kwargs["page_token"] == "cal_tok_2"
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +209,7 @@ async def test_delete_event_docstring_has_destructive_marker():
 
 @pytest.mark.anyio
 async def test_search_events(fake_api):
-    fake_api.search_events.return_value = [{"id": "s1"}]
+    fake_api.search_events_page.return_value = {"items": [{"id": "s1"}]}
 
     result = await server.mcp.call_tool(
         "search_events",
@@ -193,8 +218,8 @@ async def test_search_events(fake_api):
     data = _parse(result)
     assert data["ok"] is True
     assert data["data"] == [{"id": "s1"}]
-    fake_api.search_events.assert_called_once_with(
-        query="budget", calendar_id="primary", max_results=3
+    fake_api.search_events_page.assert_called_once_with(
+        query="budget", calendar_id="primary", max_results=3, page_token=None
     )
 
 
@@ -213,7 +238,7 @@ async def test_get_event(fake_api):
 
 @pytest.mark.anyio
 async def test_list_calendars(fake_api):
-    fake_api.list_calendars.return_value = [{"id": "primary"}, {"id": "work"}]
+    fake_api.list_calendars_page.return_value = {"items": [{"id": "primary"}, {"id": "work"}]}
 
     result = await server.mcp.call_tool("list_calendars", {})
     data = _parse(result)

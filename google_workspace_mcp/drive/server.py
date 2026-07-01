@@ -1,7 +1,7 @@
 """Google Drive MCP server: search, read, upload, organize, and share files."""
 from __future__ import annotations
 
-from ..core import build_server, register, get_api, run_tool, ok
+from ..core import build_server, get_api, ok, register, run_tool
 from .drive_api import DriveAPI
 
 mcp = build_server(
@@ -24,24 +24,39 @@ def search_files(
     parent_id: str | None = None,
     full_text: str | None = None,
     page_size: int = 25,
+    page_token: str | None = None,
 ) -> dict:
-    """Search Drive by name, mimeType, parent folder, full-text, and/or a raw q= query."""
+    """Search Drive by name, mimeType, parent folder, full-text, and/or a raw q= query.
+
+    Pass page_token from a previous response's next_page_token to continue.
+    """
     api, resolved = _api(account)
-    data = run_tool(
+    raw = run_tool(
         lambda: api.search_files(
             query=query, name=name, mime_type=mime_type,
             parent_id=parent_id, full_text=full_text, page_size=page_size,
+            page_token=page_token,
         )
     )
-    return ok(resolved, data)
+    next_token = raw.pop("nextPageToken", None)
+    return ok(resolved, raw, next_page_token=next_token)
 
 
 @register(mcp)
-def list_files(account: str | None = None, folder_id: str | None = None, page_size: int = 25) -> dict:
-    """List recent files, optionally restricted to a folder's children."""
+def list_files(
+    account: str | None = None,
+    folder_id: str | None = None,
+    page_size: int = 25,
+    page_token: str | None = None,
+) -> dict:
+    """List recent files, optionally restricted to a folder's children.
+
+    Pass page_token from a previous response's next_page_token to continue.
+    """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.list_files(folder_id=folder_id, page_size=page_size))
-    return ok(resolved, data)
+    raw = run_tool(lambda: api.list_files(folder_id=folder_id, page_size=page_size, page_token=page_token))
+    next_token = raw.pop("nextPageToken", None)
+    return ok(resolved, raw, next_page_token=next_token)
 
 
 @register(mcp)
@@ -104,6 +119,38 @@ def list_permissions(account: str | None = None, file_id: str = "") -> dict:
     """List permissions on a file."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.list_permissions(file_id))
+    return ok(resolved, data)
+
+
+@register(mcp)
+def get_changes_start_token(account: str | None = None) -> dict:
+    """Get a change-feed baseline token for Drive. Save the returned
+    start_page_token and pass it to list_changes on the next run."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.get_changes_start_token())
+    return ok(resolved, data)
+
+
+@register(mcp)
+def list_changes(
+    account: str | None = None,
+    page_token: str = "",
+    page_size: int = 100,
+    include_removed: bool = True,
+    restrict_to_my_drive: bool = False,
+) -> dict:
+    """List Drive changes since page_token. Returns change entries plus
+    exactly one of next_page_token (more pages now: call again with it) or
+    new_start_token (caught up: save it for the next poll)."""
+    api, resolved = _api(account)
+    data = run_tool(
+        lambda: api.list_changes(
+            page_token,
+            page_size=page_size,
+            include_removed=include_removed,
+            restrict_to_my_drive=restrict_to_my_drive,
+        )
+    )
     return ok(resolved, data)
 
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,9 +11,9 @@ from mcp.types import TextContent
 
 from google_workspace_mcp.drive import server
 from google_workspace_mcp.drive.drive_api import (
-    DriveAPI,
     EXPORT_FORMATS,
     TEXT_READ_MAX_BYTES,
+    DriveAPI,
     _resolve_export_mime,
 )
 
@@ -56,6 +55,16 @@ def test_search_files_builds_query(monkeypatch):
     assert "'P1' in parents" in q
     assert "fullText contains 'budget'" in q
     assert kwargs["pageSize"] == 25
+    assert "pageToken" not in kwargs
+
+
+def test_search_files_passes_page_token(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.files().list().execute.return_value = {"files": [], "nextPageToken": "drv2"}
+    out = api.search_files(page_token="drv1")
+    _, kwargs = svc.files().list.call_args
+    assert kwargs["pageToken"] == "drv1"
+    assert out["nextPageToken"] == "drv2"
 
 
 def test_list_files_in_folder(monkeypatch):
@@ -66,6 +75,15 @@ def test_list_files_in_folder(monkeypatch):
     assert "'F1' in parents" in kwargs["q"]
     assert kwargs["orderBy"] == "modifiedTime desc"
     assert kwargs["pageSize"] == 10
+
+
+def test_list_files_passes_page_token(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.files().list().execute.return_value = {"files": [], "nextPageToken": "nxt"}
+    out = api.list_files(page_token="cur")
+    _, kwargs = svc.files().list.call_args
+    assert kwargs["pageToken"] == "cur"
+    assert out["nextPageToken"] == "nxt"
 
 
 def test_get_file(monkeypatch):
@@ -362,11 +380,23 @@ def test_export_formats_cover_spec_types():
 
 @pytest.mark.anyio
 async def test_search_files_envelope(monkeypatch):
-    fake = SimpleNamespace(search_files=lambda **kw: {"files": [{"id": "F1"}]})
+    fake = MagicMock(spec=DriveAPI)
+    fake.search_files.return_value = {"files": [{"id": "F1"}]}
     monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
     env = envelope(await server.mcp.call_tool("search_files", {"name": "test"}))
     assert env["ok"] is True and env["account"] == "d@x.com"
     assert env["data"]["files"][0]["id"] == "F1"
+    assert "next_page_token" not in env
+
+
+@pytest.mark.anyio
+async def test_search_files_lifts_next_page_token(monkeypatch):
+    fake = MagicMock(spec=DriveAPI)
+    fake.search_files.return_value = {"files": [{"id": "F1"}], "nextPageToken": "drv_tok_2"}
+    monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
+    env = envelope(await server.mcp.call_tool("search_files", {"name": "test"}))
+    assert env["next_page_token"] == "drv_tok_2"
+    assert "nextPageToken" not in env["data"]
 
 
 @pytest.mark.anyio
@@ -374,7 +404,9 @@ async def test_tools_registered_and_account_param():
     tools = {t.name: t for t in await server.mcp.list_tools()}
     drive_tools = [
         "search_files", "list_files", "get_file", "download_file", "export_file",
-        "read_file_text", "list_permissions", "upload_file", "update_file_content",
+        "read_file_text", "list_permissions",
+        "get_changes_start_token", "list_changes",
+        "upload_file", "update_file_content",
         "create_folder", "move_file", "rename_file", "copy_file", "share_file",
         "trash_file", "delete_file",
         "batch_move_files", "batch_create_folders", "batch_trash_files", "batch_delete_files",
@@ -387,9 +419,10 @@ async def test_tools_registered_and_account_param():
 
 @pytest.mark.anyio
 async def test_batch_move_files_envelope(monkeypatch):
-    fake = SimpleNamespace(
-        batch_move_files=lambda items: {"total": len(items), "succeeded": len(items), "failed": 0, "results": []}
-    )
+    fake = MagicMock(spec=DriveAPI)
+    fake.batch_move_files.return_value = {
+        "total": 2, "succeeded": 2, "failed": 0, "results": [],
+    }
     monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
     env = envelope(await server.mcp.call_tool(
         "batch_move_files", {"file_ids": ["A", "B"], "new_parent_id": "DEST"}

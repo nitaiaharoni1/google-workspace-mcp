@@ -1,14 +1,12 @@
 """Tests for the Gmail MCP server."""
 from __future__ import annotations
 
-import importlib
 import json
-import os
+import sys
 
 import pytest
 
 from google_workspace_mcp.gmail import server
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -37,9 +35,28 @@ class FakeAPI:
         self._record("list_messages", max_results=max_results, label_ids=label_ids, query=query)
         return [{"id": "msg1"}, {"id": "msg2"}]
 
-    def search_with_details(self, max_results=10, label_ids=None, query=None, format="metadata"):
-        self._record("search_with_details", max_results=max_results, query=query, format=format)
-        return [{"id": "msg1", "snippet": "Hello"}]
+    def list_messages_page(self, max_results=10, label_ids=None, query=None, page_token=None):
+        self._record(
+            "list_messages_page",
+            max_results=max_results,
+            label_ids=label_ids,
+            query=query,
+            page_token=page_token,
+        )
+        out = {"items": [{"id": "msg1"}, {"id": "msg2"}]}
+        if page_token is None:
+            out["nextPageToken"] = "tok_page2"
+        return out
+
+    def search_with_details(self, max_results=10, label_ids=None, query=None, format="metadata", page_token=None):
+        self._record(
+            "search_with_details",
+            max_results=max_results,
+            query=query,
+            format=format,
+            page_token=page_token,
+        )
+        return {"items": [{"id": "msg1", "snippet": "Hello"}]}
 
     def get_message(self, message_id, format="full"):
         self._record("get_message", message_id=message_id, format=format)
@@ -48,6 +65,10 @@ class FakeAPI:
     def list_threads(self, max_results=10, query=None):
         self._record("list_threads", max_results=max_results, query=query)
         return [{"id": "thread1"}]
+
+    def list_threads_page(self, max_results=10, query=None, page_token=None):
+        self._record("list_threads_page", max_results=max_results, query=query, page_token=page_token)
+        return {"items": [{"id": "thread1"}]}
 
     def list_labels(self):
         self._record("list_labels")
@@ -61,6 +82,10 @@ class FakeAPI:
         self._record("list_drafts", max_results=max_results)
         return [{"id": "draft1"}]
 
+    def list_drafts_page(self, max_results=10, page_token=None):
+        self._record("list_drafts_page", max_results=max_results, page_token=page_token)
+        return {"items": [{"id": "draft1"}]}
+
     def get_draft(self, draft_id):
         self._record("get_draft", draft_id=draft_id)
         return {"id": draft_id}
@@ -72,6 +97,28 @@ class FakeAPI:
     def get_filter(self, filter_id):
         self._record("get_filter", filter_id=filter_id)
         return {"id": filter_id}
+
+    def get_changes_start_token(self):
+        self._record("get_changes_start_token")
+        return {"start_history_token": "100", "email": "test@x.com"}
+
+    def list_changes(
+        self,
+        start_history_token,
+        history_types=None,
+        label_id=None,
+        max_results=100,
+        page_token=None,
+    ):
+        self._record(
+            "list_changes",
+            start_history_token=start_history_token,
+            history_types=history_types,
+            label_id=label_id,
+            max_results=max_results,
+            page_token=page_token,
+        )
+        return {"changes": [], "new_history_token": "101"}
 
     # WRITE methods
     def send_message(self, to, subject, body, attachments=None, cc=None, html=False):
@@ -202,6 +249,7 @@ async def test_tool_names():
         "get_profile", "list_messages", "search_messages", "get_message",
         "list_threads", "list_labels", "get_label",
         "list_drafts", "get_draft", "list_filters", "get_filter",
+        "get_changes_start_token", "list_changes",
     }
     expected_write = {
         "send_message", "reply_to_message", "forward_message",
@@ -240,7 +288,21 @@ async def test_list_messages_envelope(monkeypatch):
     assert data["data"][0]["id"] == "msg1"
 
     # confirm underlying api was called with the query
-    assert fake.calls["list_messages"]["query"] == "is:unread"
+    assert fake.calls["list_messages_page"]["query"] == "is:unread"
+    assert data["next_page_token"] == "tok_page2"
+
+
+@pytest.mark.anyio
+async def test_list_messages_page_token_passed_through(monkeypatch):
+    fake, patched = make_fake_api()
+    monkeypatch.setattr(server, "_api", patched)
+
+    result = await server.mcp.call_tool("list_messages", {"page_token": "tok_page2"})
+    data = parse_result(result)
+
+    assert data["ok"] is True
+    assert "next_page_token" not in data
+    assert fake.calls["list_messages_page"]["page_token"] == "tok_page2"
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +396,7 @@ async def main():
 asyncio.run(main())
 """
     result = subprocess.run(
-        ["/Users/nitai/REPOS/google-workspace-mcp/.venv/bin/python", "-c", code],
+        [sys.executable, "-c", code],
         capture_output=True, text=True,
     )
     assert result.returncode == 0, f"subprocess failed:\n{result.stdout}\n{result.stderr}"

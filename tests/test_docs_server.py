@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -386,7 +385,8 @@ def test_get_chart_image_url():
 
 @pytest.mark.anyio
 async def test_read_document_envelope(monkeypatch):
-    fake = SimpleNamespace(get_document_text=lambda doc_id: {"documentId": doc_id, "text": "hi"})
+    fake = MagicMock(spec=DocsAPI)
+    fake.get_document_text.return_value = {"documentId": "D1", "text": "hi"}
     monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
     env = envelope(await server.mcp.call_tool("read_document", {"document_id": "D1"}))
     assert env["ok"] is True and env["account"] == "d@x.com"
@@ -395,11 +395,8 @@ async def test_read_document_envelope(monkeypatch):
 
 @pytest.mark.anyio
 async def test_get_content_map_envelope(monkeypatch):
-    fake = SimpleNamespace(
-        get_content_map=lambda doc_id, include_headers_footers=True: {
-            "documentId": doc_id, "elements": [],
-        },
-    )
+    fake = MagicMock(spec=DocsAPI)
+    fake.get_content_map.return_value = {"documentId": "D1", "elements": []}
     monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
     env = envelope(await server.mcp.call_tool("get_content_map", {"document_id": "D1"}))
     assert env["ok"] is True
@@ -408,9 +405,8 @@ async def test_get_content_map_envelope(monkeypatch):
 
 @pytest.mark.anyio
 async def test_populate_table_envelope(monkeypatch):
-    fake = SimpleNamespace(
-        populate_table=lambda doc_id, table_start_index, rows, segment_id=None: {"filled": len(rows)},
-    )
+    fake = MagicMock(spec=DocsAPI)
+    fake.populate_table.return_value = {"filled": 1}
     monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
     env = envelope(await server.mcp.call_tool(
         "populate_table",

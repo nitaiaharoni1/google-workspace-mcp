@@ -9,8 +9,8 @@ identically and support:
 - **Multiple accounts in parallel**: every tool takes an `account` argument
   (email or alias). Calls for different accounts use separate, cached clients and
   never interfere.
-- **Many operations**: ~36 Gmail tools, ~22 Calendar tools, ~41 Sheets tools (incl. text editing),
-  ~25 Docs tools, ~16 Drive tools, plus shared `list_accounts` / `whoami` /
+- **Many operations**: ~43 Gmail tools, ~24 Calendar tools, ~47 Sheets tools (incl. text editing),
+  ~32 Docs tools, ~22 Drive tools, plus shared `list_accounts` / `whoami` /
   `auth_status` on every server.
 
 ## Architecture
@@ -63,11 +63,25 @@ Auth is **out-of-band**: the servers are non-interactive token consumers. You
 log in once with the bundled `google-auth` CLI, which writes a unified token to
 `~/.google/`; every server then reads and silently refreshes it.
 
+**Quick start (recommended):**
+
+```bash
+google-auth setup you@example.com   # wizard: OAuth client → login → API check → .mcp.json
+google-auth doctor                  # verify setup anytime
+```
+
+The wizard walks you through creating a Desktop OAuth client in Google Cloud
+Console, logging in, confirming the five APIs are enabled, and prints
+ready-to-paste `.mcp.json` snippets with absolute paths (required by GUI clients
+that do not inherit your shell PATH).
+
 You bring your **own** Google OAuth client. There is no shared client embedded
 in the package: Gmail and Drive are Google "restricted" scopes, so a shared
 published client would require Google's security assessment. With your own
 client used in "testing" mode (you add yourself as a test user) you skip
 verification entirely.
+
+### Manual setup (appendix)
 
 **1. Create an OAuth client** in the [Google Cloud Console](https://console.cloud.google.com):
 
@@ -88,6 +102,7 @@ google-auth alias work you@example.com # optional short alias
 google-auth login you@personal.com     # add more accounts
 google-auth list                       # show accounts, default, aliases
 google-auth status                     # show token + scope health
+google-auth doctor                     # diagnose setup issues
 ```
 
 A single login grants Gmail + Calendar + Sheets + Docs + Drive scopes, shared by
@@ -135,11 +150,18 @@ Set `GOOGLE_MCP_READONLY=1` in a server's environment to hide every mutating
 tool (writes, deletes, clears) from that server. Destructive tools are also
 clearly marked in their descriptions.
 
+Every tool advertises MCP-native `ToolAnnotations` (`readOnlyHint`,
+`destructiveHint`) in `list_tools`, derived from the same flags that drive the
+read-only gate. Annotations are hints for well-behaved clients (auto-allow reads,
+confirm destructive writes); `GOOGLE_MCP_READONLY` remains the enforcement
+mechanism — clients must not rely on annotations alone for security.
+
 ## Testing
 
 ```bash
 pip install -e .[dev]
 pytest                     # unit, protocol (in-memory), isolation, persistence
+ruff check .               # minimal lint (import order, syntax, pyflakes)
 GOOGLE_MCP_LIVE=1 pytest   # opt-in live smoke tests (needs a real test account)
 ```
 

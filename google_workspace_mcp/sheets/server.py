@@ -1,6 +1,7 @@
 """Google Sheets MCP server: read/write values and manage sheet structure."""
 from __future__ import annotations
-from ..core import build_server, register, get_api, run_tool, ok
+
+from ..core import build_server, get_api, ok, register, run_tool
 from .sheets_api import SheetsAPI
 
 mcp = build_server(

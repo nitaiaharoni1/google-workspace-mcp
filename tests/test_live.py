@@ -32,12 +32,31 @@ def test_gmail_profile_live():
     assert profile.get("emailAddress")
 
 
+def test_gmail_change_feed_live():
+    from google_workspace_mcp.gmail import server
+
+    api, _ = server._api(ACCOUNT)
+    baseline = api.get_changes_start_token()
+    token = baseline["start_history_token"]
+    assert token
+    changes = api.list_changes(token)
+    assert isinstance(changes.get("changes"), list)
+
+
 def test_calendar_list_live():
     from google_workspace_mcp.calendar import server
 
     api, _ = server._api(ACCOUNT)
     calendars = api.list_calendars()
     assert isinstance(calendars, (list, dict))
+
+
+def test_calendar_change_feed_baseline_live():
+    from google_workspace_mcp.calendar import server
+
+    api, _ = server._api(ACCOUNT)
+    result = api.list_event_changes(calendar_id="primary", max_results=10)
+    assert result.get("new_sync_token") or result.get("next_page_token") is not None or result.get("events") is not None
 
 
 def test_sheets_roundtrip_live():
@@ -103,9 +122,10 @@ def test_docs_roundtrip_live():
 
 def test_insert_page_number_not_supported_live():
     """Document that insertPageNumber is rejected by the live Docs API."""
+    from googleapiclient.errors import HttpError
+
     from google_workspace_mcp.docs import server as docs
     from google_workspace_mcp.drive import server as drive
-    from googleapiclient.errors import HttpError
 
     docs_api, _ = docs._api(ACCOUNT)
     drive_api, _ = drive._api(ACCOUNT)
@@ -150,3 +170,35 @@ def test_drive_roundtrip_live(tmp_path):
         if file_id:
             drive_api.delete_file(file_id)
         drive_api.delete_file(folder_id)
+
+
+def test_drive_change_feed_live(tmp_path):
+    from google_workspace_mcp.drive import server as drive
+
+    drive_api, _ = drive._api(ACCOUNT)
+
+    baseline = drive_api.get_changes_start_token()
+    page_token = baseline["start_page_token"]
+    assert page_token
+
+    upload_path = tmp_path / "mcp-change-feed.txt"
+    upload_path.write_text("change feed probe")
+    file_id = None
+    try:
+        uploaded = drive_api.upload_file(str(upload_path))
+        file_id = uploaded["id"]
+
+        seen = False
+        token = page_token
+        for _ in range(20):
+            page = drive_api.list_changes(token)
+            if any(c.get("file_id") == file_id for c in page.get("changes", [])):
+                seen = True
+                break
+            token = page.get("next_page_token") or page.get("new_start_token")
+            if not token:
+                break
+        assert seen, "uploaded file did not appear in Drive change feed"
+    finally:
+        if file_id:
+            drive_api.delete_file(file_id)

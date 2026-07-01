@@ -2,12 +2,12 @@
 
 import datetime
 
+import google_auth_core as core
 import pytest
 from google.oauth2.credentials import Credentials
-
-import google_auth_core as core
 from google_auth_core import service as service_mod
 from google_auth_core import store
+
 from google_workspace_mcp.core import runtime
 
 

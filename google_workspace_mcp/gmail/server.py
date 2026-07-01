@@ -1,8 +1,8 @@
 """Gmail MCP server: read, search, send, label, and manage messages."""
 from __future__ import annotations
 
-from ..core import build_server, register, get_api, run_tool, ok
-from gmail_cli.api import GmailAPI
+from ..core import build_server, get_api, ok, register, run_tool
+from .changes_api import GmailChangesAPI
 
 mcp = build_server(
     "gmail-mcp",
@@ -11,7 +11,7 @@ mcp = build_server(
 
 
 def _api(account=None):
-    return get_api("gmail", GmailAPI, account)
+    return get_api("gmail", GmailChangesAPI, account)
 
 
 # ---------------------------------------------------------------------------
@@ -32,11 +32,19 @@ def list_messages(
     query: str | None = None,
     label_ids: list[str] | None = None,
     max_results: int = 10,
+    page_token: str | None = None,
 ) -> dict:
-    """List messages, optionally filtered by a Gmail search query (e.g. 'from:bob is:unread')."""
+    """List messages, optionally filtered by a Gmail search query (e.g. 'from:bob is:unread').
+
+    Pass page_token from a previous response's next_page_token to continue.
+    """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.list_messages(max_results=max_results, label_ids=label_ids, query=query))
-    return ok(resolved, data)
+    page = run_tool(
+        lambda: api.list_messages_page(
+            max_results=max_results, label_ids=label_ids, query=query, page_token=page_token
+        )
+    )
+    return ok(resolved, page["items"], next_page_token=page.get("nextPageToken"))
 
 
 @register(mcp)
@@ -46,11 +54,23 @@ def search_messages(
     label_ids: list[str] | None = None,
     max_results: int = 10,
     format: str = "metadata",
+    page_token: str | None = None,
 ) -> dict:
-    """Search messages and return full details (headers, snippet, labels) in one call."""
+    """Search messages and return full details (headers, snippet, labels) in one call.
+
+    Pass page_token from a previous response's next_page_token to continue.
+    """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.search_with_details(max_results=max_results, label_ids=label_ids, query=query, format=format))
-    return ok(resolved, data)
+    page = run_tool(
+        lambda: api.search_with_details(
+            max_results=max_results,
+            label_ids=label_ids,
+            query=query,
+            format=format,
+            page_token=page_token,
+        )
+    )
+    return ok(resolved, page["items"], next_page_token=page.get("nextPageToken"))
 
 
 @register(mcp)
@@ -70,11 +90,17 @@ def list_threads(
     account: str | None = None,
     query: str | None = None,
     max_results: int = 10,
+    page_token: str | None = None,
 ) -> dict:
-    """List email threads, optionally filtered by a Gmail search query."""
+    """List email threads, optionally filtered by a Gmail search query.
+
+    Pass page_token from a previous response's next_page_token to continue.
+    """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.list_threads(max_results=max_results, query=query))
-    return ok(resolved, data)
+    page = run_tool(
+        lambda: api.list_threads_page(max_results=max_results, query=query, page_token=page_token)
+    )
+    return ok(resolved, page["items"], next_page_token=page.get("nextPageToken"))
 
 
 @register(mcp)
@@ -128,11 +154,20 @@ def get_label(account: str | None = None, label_id: str = "") -> dict:
 
 
 @register(mcp)
-def list_drafts(account: str | None = None, max_results: int = 10) -> dict:
-    """List draft messages."""
+def list_drafts(
+    account: str | None = None,
+    max_results: int = 10,
+    page_token: str | None = None,
+) -> dict:
+    """List draft messages.
+
+    Pass page_token from a previous response's next_page_token to continue.
+    """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.list_drafts(max_results=max_results))
-    return ok(resolved, data)
+    page = run_tool(
+        lambda: api.list_drafts_page(max_results=max_results, page_token=page_token)
+    )
+    return ok(resolved, page["items"], next_page_token=page.get("nextPageToken"))
 
 
 @register(mcp)
@@ -156,6 +191,44 @@ def get_filter(account: str | None = None, filter_id: str = "") -> dict:
     """Get a specific Gmail filter by ID."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.get_filter(filter_id))
+    return ok(resolved, data)
+
+
+@register(mcp)
+def get_changes_start_token(account: str | None = None) -> dict:
+    """Get a change-feed baseline token for the mailbox. Save the returned
+    start_history_token and pass it to list_changes on the next run to get
+    only what changed in between."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.get_changes_start_token())
+    return ok(resolved, data)
+
+
+@register(mcp)
+def list_changes(
+    account: str | None = None,
+    start_history_token: str = "",
+    history_types: list[str] | None = None,
+    label_id: str | None = None,
+    max_results: int = 100,
+    page_token: str | None = None,
+) -> dict:
+    """List mailbox changes since start_history_token (from
+    get_changes_start_token or a previous list_changes). Returns typed
+    entries (message_added / message_deleted / labels_added / labels_removed)
+    plus new_history_token to save for the next poll. Page through
+    next_page_token before saving the new token. history_types filters to
+    e.g. ['messageAdded']; label_id filters to one label (e.g. 'INBOX')."""
+    api, resolved = _api(account)
+    data = run_tool(
+        lambda: api.list_changes(
+            start_history_token,
+            history_types=history_types,
+            label_id=label_id,
+            max_results=max_results,
+            page_token=page_token,
+        )
+    )
     return ok(resolved, data)
 
 

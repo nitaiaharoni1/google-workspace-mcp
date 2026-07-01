@@ -10,6 +10,7 @@ import threading
 from typing import Any, Callable, Optional
 
 import google_auth_core as core
+from mcp.types import ToolAnnotations
 
 
 def _readonly() -> bool:
@@ -23,9 +24,15 @@ _api_cache: dict = {}
 _lock = threading.Lock()
 
 
-def ok(account: str, data: Any) -> dict:
-    """Standard success envelope shared by all tools."""
-    return {"ok": True, "account": account, "data": data}
+def ok(account: str, data: Any, **meta: Any) -> dict:
+    """Standard success envelope shared by all tools.
+
+    Extra keyword args are added to the envelope only when not None. The only
+    meta key defined today is next_page_token.
+    """
+    out = {"ok": True, "account": account, "data": data}
+    out.update({k: v for k, v in meta.items() if v is not None})
+    return out
 
 
 def get_api(
@@ -75,8 +82,15 @@ def run_tool(fn: Callable[[], Any]) -> Any:
         raise core.map_exception(e)
 
 
-def register(mcp, *, mutating: bool = False, destructive: bool = False):
-    """Decorator that registers a tool, honoring the read-only gate.
+def register(
+    mcp,
+    *,
+    mutating: bool = False,
+    destructive: bool = False,
+    idempotent: bool | None = None,
+):
+    """Decorator that registers a tool, honoring the read-only gate and
+    attaching MCP ToolAnnotations derived from the same flags.
 
     Mutating tools are not registered at all when ``GOOGLE_MCP_READONLY`` is set,
     so they never appear in ``list_tools``. Destructive tools get a clear marker
@@ -90,6 +104,13 @@ def register(mcp, *, mutating: bool = False, destructive: bool = False):
             fn.__doc__ = fn.__doc__.rstrip() + (
                 "\n\n[DESTRUCTIVE] Permanently changes or deletes data; cannot be undone."
             )
-        return mcp.tool()(fn)
+        annotations = ToolAnnotations(
+            readOnlyHint=not mutating,
+            # MCP defaults destructiveHint to True when absent; mutating
+            # non-destructive tools must set it False explicitly.
+            destructiveHint=destructive if mutating else None,
+            idempotentHint=idempotent,
+        )
+        return mcp.tool(annotations=annotations)(fn)
 
     return deco

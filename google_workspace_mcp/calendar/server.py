@@ -1,8 +1,8 @@
 """Google Calendar MCP server: events, calendars, availability."""
 from __future__ import annotations
 
-from ..core import build_server, register, get_api, run_tool, ok
-from google_calendar_cli.api import CalendarAPI
+from ..core import build_server, get_api, ok, register, run_tool
+from .changes_api import CalendarChangesAPI
 
 mcp = build_server(
     "gcal-mcp",
@@ -11,7 +11,7 @@ mcp = build_server(
 
 
 def _api(account=None):
-    return get_api("calendar", CalendarAPI, account)
+    return get_api("calendar", CalendarChangesAPI, account)
 
 
 # ---------------------------------------------------------------------------
@@ -27,11 +27,17 @@ def get_profile(account: str | None = None) -> dict:
 
 
 @register(mcp)
-def list_calendars(account: str | None = None) -> dict:
-    """List all calendars accessible to the account."""
+def list_calendars(
+    account: str | None = None,
+    page_token: str | None = None,
+) -> dict:
+    """List all calendars accessible to the account.
+
+    Pass page_token from a previous response's next_page_token to continue.
+    """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.list_calendars())
-    return ok(resolved, data)
+    page = run_tool(lambda: api.list_calendars_page(page_token=page_token))
+    return ok(resolved, page["items"], next_page_token=page.get("nextPageToken"))
 
 
 @register(mcp)
@@ -51,20 +57,25 @@ def list_events(
     time_max: str | None = None,
     single_events: bool = True,
     order_by: str = "startTime",
+    page_token: str | None = None,
 ) -> dict:
-    """List events on a calendar within an optional time window (RFC3339 timestamps)."""
+    """List events on a calendar within an optional time window (RFC3339 timestamps).
+
+    Pass page_token from a previous response's next_page_token to continue.
+    """
     api, resolved = _api(account)
-    data = run_tool(
-        lambda: api.list_events(
+    page = run_tool(
+        lambda: api.list_events_page(
             calendar_id=calendar_id,
             max_results=max_results,
             time_min=time_min,
             time_max=time_max,
             single_events=single_events,
             order_by=order_by,
+            page_token=page_token,
         )
     )
-    return ok(resolved, data)
+    return ok(resolved, page["items"], next_page_token=page.get("nextPageToken"))
 
 
 @register(mcp)
@@ -73,13 +84,19 @@ def search_events(
     query: str = "",
     calendar_id: str = "primary",
     max_results: int = 10,
+    page_token: str | None = None,
 ) -> dict:
-    """Search events on a calendar by text query."""
+    """Search events on a calendar by text query.
+
+    Pass page_token from a previous response's next_page_token to continue.
+    """
     api, resolved = _api(account)
-    data = run_tool(
-        lambda: api.search_events(query=query, calendar_id=calendar_id, max_results=max_results)
+    page = run_tool(
+        lambda: api.search_events_page(
+            query=query, calendar_id=calendar_id, max_results=max_results, page_token=page_token
+        )
     )
-    return ok(resolved, data)
+    return ok(resolved, page["items"], next_page_token=page.get("nextPageToken"))
 
 
 @register(mcp)
@@ -100,15 +117,19 @@ def get_recurring_event_instances(
     event_id: str = "",
     calendar_id: str = "primary",
     max_results: int = 250,
+    page_token: str | None = None,
 ) -> dict:
-    """Get all instances of a recurring event."""
+    """Get all instances of a recurring event.
+
+    Pass page_token from a previous response's next_page_token to continue.
+    """
     api, resolved = _api(account)
-    data = run_tool(
-        lambda: api.get_recurring_event_instances(
-            event_id, calendar_id=calendar_id, max_results=max_results
+    page = run_tool(
+        lambda: api.instances_page(
+            event_id, calendar_id=calendar_id, max_results=max_results, page_token=page_token
         )
     )
-    return ok(resolved, data)
+    return ok(resolved, page["items"], next_page_token=page.get("nextPageToken"))
 
 
 @register(mcp)
@@ -172,6 +193,31 @@ def get_colors(account: str | None = None) -> dict:
     """Get available colors for calendars and events."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.get_colors())
+    return ok(resolved, data)
+
+
+@register(mcp)
+def list_event_changes(
+    account: str | None = None,
+    calendar_id: str = "primary",
+    sync_token: str | None = None,
+    page_token: str | None = None,
+    max_results: int = 250,
+) -> dict:
+    """List events changed since sync_token. First call without sync_token
+    establishes a baseline (full walk) and returns new_sync_token to save;
+    later calls with it return only changes (status 'cancelled' = deleted).
+    Follow next_page_token within a poll; save new_sync_token for the next
+    poll. If the token has expired the error says to re-baseline."""
+    api, resolved = _api(account)
+    data = run_tool(
+        lambda: api.list_event_changes(
+            calendar_id=calendar_id,
+            sync_token=sync_token,
+            page_token=page_token,
+            max_results=max_results,
+        )
+    )
     return ok(resolved, data)
 
 

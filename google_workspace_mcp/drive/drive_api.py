@@ -15,6 +15,10 @@ FOLDER_MIME = "application/vnd.google-apps.folder"
 
 FILE_LIST_FIELDS = "nextPageToken, files(id, name, mimeType, size, modifiedTime, parents)"
 FILE_METADATA_FIELDS = "id, name, mimeType, size, modifiedTime, parents, webViewLink, trashed, owners, shared"
+CHANGE_LIST_FIELDS = (
+    "nextPageToken,newStartPageToken,"
+    "changes(fileId,removed,time,file(id,name,mimeType,modifiedTime,trashed,parents))"
+)
 
 # Max bytes returned inline by read_file_text (1 MiB).
 TEXT_READ_MAX_BYTES = 1_048_576
@@ -72,6 +76,33 @@ def _resolve_export_mime(source_mime: str, fmt: str) -> str:
     return export_mime
 
 
+def normalize_drive_change(change):
+    """Normalize a Drive changes.list entry for agent consumption."""
+    file_obj = change.get("file")
+    removed = bool(change.get("removed"))
+    if file_obj and file_obj.get("trashed"):
+        removed = True
+    if removed and not file_obj:
+        norm_file = None
+    elif file_obj:
+        norm_file = {
+            "id": file_obj.get("id"),
+            "name": file_obj.get("name"),
+            "mimeType": file_obj.get("mimeType"),
+            "modifiedTime": file_obj.get("modifiedTime"),
+            "trashed": file_obj.get("trashed"),
+            "parents": file_obj.get("parents"),
+        }
+    else:
+        norm_file = None
+    return {
+        "file_id": change.get("fileId"),
+        "removed": removed,
+        "time": change.get("time"),
+        "file": norm_file,
+    }
+
+
 def _download_to_bytes(service, request) -> bytes:
     buf = io.BytesIO()
     downloader = MediaIoBaseDownload(buf, request)
@@ -97,6 +128,7 @@ class DriveAPI:
         parent_id: str | None = None,
         full_text: str | None = None,
         page_size: int = 25,
+        page_token: str | None = None,
     ):
         parts = ["trashed = false"]
         if query:
@@ -112,22 +144,33 @@ class DriveAPI:
             escaped = full_text.replace("'", "\\'")
             parts.append(f"fullText contains '{escaped}'")
         q = " and ".join(parts)
-        return self._files().list(
-            q=q,
-            pageSize=page_size,
-            fields=FILE_LIST_FIELDS,
-        ).execute()
+        params: dict = {
+            "q": q,
+            "pageSize": page_size,
+            "fields": FILE_LIST_FIELDS,
+        }
+        if page_token:
+            params["pageToken"] = page_token
+        return self._files().list(**params).execute()
 
-    def list_files(self, folder_id: str | None = None, page_size: int = 25):
+    def list_files(
+        self,
+        folder_id: str | None = None,
+        page_size: int = 25,
+        page_token: str | None = None,
+    ):
         q = "trashed = false"
         if folder_id:
             q += f" and '{folder_id}' in parents"
-        return self._files().list(
-            q=q,
-            orderBy="modifiedTime desc",
-            pageSize=page_size,
-            fields=FILE_LIST_FIELDS,
-        ).execute()
+        params: dict = {
+            "q": q,
+            "orderBy": "modifiedTime desc",
+            "pageSize": page_size,
+            "fields": FILE_LIST_FIELDS,
+        }
+        if page_token:
+            params["pageToken"] = page_token
+        return self._files().list(**params).execute()
 
     def get_file(self, file_id: str):
         return self._files().get(fileId=file_id, fields=FILE_METADATA_FIELDS).execute()
@@ -305,6 +348,32 @@ class DriveAPI:
         return self.service.permissions().list(
             fileId=file_id, fields="permissions(id, type, role, emailAddress, displayName)"
         ).execute()
+
+    def get_changes_start_token(self):
+        result = self.service.changes().getStartPageToken().execute()
+        return {"start_page_token": result["startPageToken"]}
+
+    def list_changes(
+        self,
+        page_token,
+        page_size=100,
+        include_removed=True,
+        restrict_to_my_drive=False,
+    ):
+        if not page_token:
+            raise ValueError("page_token is required")
+        result = self.service.changes().list(
+            pageToken=page_token,
+            pageSize=page_size,
+            includeRemoved=include_removed,
+            restrictToMyDrive=restrict_to_my_drive,
+            fields=CHANGE_LIST_FIELDS,
+        ).execute()
+        return {
+            "changes": [normalize_drive_change(c) for c in result.get("changes", [])],
+            "next_page_token": result.get("nextPageToken"),
+            "new_start_token": result.get("newStartPageToken"),
+        }
 
     def trash_file(self, file_id: str):
         return self._files().update(

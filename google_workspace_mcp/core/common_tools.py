@@ -10,9 +10,11 @@ from typing import Optional
 
 import google_auth_core as core
 
+from .runtime import register
+
 
 def register_common_tools(mcp) -> None:
-    @mcp.tool()
+    @register(mcp)
     def list_accounts() -> dict:
         """List configured Google accounts, the default account, and aliases."""
         return {
@@ -24,7 +26,7 @@ def register_common_tools(mcp) -> None:
             },
         }
 
-    @mcp.tool()
+    @register(mcp)
     def auth_status(account: Optional[str] = None) -> dict:
         """Report token health for one account, or all accounts if omitted."""
         accounts = [account] if account else core.list_accounts()
@@ -33,7 +35,7 @@ def register_common_tools(mcp) -> None:
         }
         return {"ok": True, "data": statuses}
 
-    @mcp.tool()
+    @register(mcp)
     def whoami(account: Optional[str] = None) -> dict:
         """Resolve an account or alias and report its credential status.
 

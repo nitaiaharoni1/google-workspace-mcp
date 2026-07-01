@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "google-workspace-suite-mcp"
-version = "0.3.1"
+version = "0.4.0"
 description = "Aligned MCP servers for Gmail, Calendar, Sheets, Docs, and Drive with persistent, multi-account auth"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,14 +20,15 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Communications :: Email",
     "Topic :: Office/Business",
 ]
 dependencies = [
-    "mcp>=1.12",
-    "google-auth-core>=0.1.0",
-    "gmail-cli-oauth>=1.5.0",
-    "google-calendar-cli>=1.6.0",
+    "mcp>=1.26",
+    "google-auth-core>=0.2.0",
+    "gmail-cli-oauth>=1.6.0",
+    "google-calendar-cli>=1.7.0",
     "google-api-python-client>=2.0.0",
 ]
 
@@ -36,7 +37,7 @@ Homepage = "https://github.com/nitaiaharoni1/google-workspace-mcp"
 Repository = "https://github.com/nitaiaharoni1/google-workspace-mcp"
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "pytest-anyio>=0.0.0", "anyio>=4"]
+dev = ["pytest>=7", "pytest-anyio>=0.0.0", "anyio>=4", "ruff>=0.4"]
 
 [project.scripts]
 gmail-mcp = "google_workspace_mcp.gmail.server:main"
@@ -53,3 +54,9 @@ include = ["google_workspace_mcp*"]
 
 [tool.pytest.ini_options]
 anyio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

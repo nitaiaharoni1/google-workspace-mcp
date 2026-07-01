@@ -155,7 +155,7 @@ def main() -> int:
             except Exception:
                 try:
                     api.rename_sheet(sheet_id, 0, "[DELETE ME] MCP Format Test")
-                    print(f"  ⚠ Drive delete unavailable (scope); renamed tab. Delete manually:")
+                    print("  ⚠ Drive delete unavailable (scope); renamed tab. Delete manually:")
                     print(f"    https://docs.google.com/spreadsheets/d/{sheet_id}")
                 except Exception as exc2:
                     print(f"  ⚠ cleanup failed: {exc2}")

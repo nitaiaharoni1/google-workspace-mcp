@@ -1,13 +1,13 @@
 """Tests for the Google Sheets MCP server and SheetsAPI wrapper."""
 from __future__ import annotations
+
 import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from google_workspace_mcp.sheets.sheets_api import SheetsAPI
 from google_workspace_mcp.sheets import server
-
+from google_workspace_mcp.sheets.sheets_api import SheetsAPI
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Fixture
@@ -127,7 +127,7 @@ class TestSheetsAPIUnit:
         api, svc = sheets_api
         svc.spreadsheets().batchUpdate.return_value.execute.return_value = {"replies": [{}]}
 
-        result = api.delete_sheet("sid", 42)
+        api.delete_sheet("sid", 42)
 
         svc.spreadsheets().batchUpdate.assert_called_with(
             spreadsheetId="sid",
@@ -138,7 +138,7 @@ class TestSheetsAPIUnit:
         api, svc = sheets_api
         svc.spreadsheets().batchUpdate.return_value.execute.return_value = {"replies": [{}]}
 
-        result = api.rename_sheet("sid", 0, "Renamed")
+        api.rename_sheet("sid", 0, "Renamed")
 
         svc.spreadsheets().batchUpdate.assert_called_with(
             spreadsheetId="sid",
@@ -748,7 +748,7 @@ def _parse_result(raw):
 
 @pytest.fixture
 def fake_api():
-    return MagicMock()
+    return MagicMock(spec=SheetsAPI)
 
 
 @pytest.fixture

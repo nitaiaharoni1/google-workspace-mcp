@@ -13,11 +13,10 @@ import subprocess
 import sys
 from types import SimpleNamespace
 
+import google_auth_core as core
 import pytest
 
-import google_auth_core as core
 from google_workspace_mcp.core import runtime
-
 
 # --- multi-account isolation -------------------------------------------------
 
@@ -146,12 +145,107 @@ def test_readonly_gate_hides_mutating_tools_docs_drive(pkg, read_tool, write_too
 
 @pytest.mark.anyio
 async def test_all_servers_expose_common_tools():
-    from google_workspace_mcp.gmail import server as g
     from google_workspace_mcp.calendar import server as c
-    from google_workspace_mcp.sheets import server as s
     from google_workspace_mcp.docs import server as d
     from google_workspace_mcp.drive import server as dr
+    from google_workspace_mcp.gmail import server as g
+    from google_workspace_mcp.sheets import server as s
 
     for mod in (g, c, s, d, dr):
         names = {t.name for t in await mod.mcp.list_tools()}
         assert {"list_accounts", "whoami", "auth_status"}.issubset(names)
+
+
+def test_google_auth_exposes_setup_and_doctor():
+    """Pinned google-auth-core>=0.2.0 must ship setup and doctor subcommands."""
+    from google_auth_core.cli import main
+
+    names = {cmd.name for cmd in main.commands.values()}
+    assert {"setup", "doctor"}.issubset(names)
+
+
+# --- MCP tool annotations ----------------------------------------------------
+
+def _tool_by_name(tools, name):
+    return next(t for t in tools if t.name == name)
+
+
+@pytest.mark.anyio
+async def test_annotations_read_vs_destructive():
+    from google_workspace_mcp.calendar import server as c
+    from google_workspace_mcp.docs import server as d
+    from google_workspace_mcp.drive import server as dr
+    from google_workspace_mcp.gmail import server as g
+    from google_workspace_mcp.sheets import server as s
+
+    cases = [
+        (g, "get_profile", "delete_message"),
+        (c, "list_events", "delete_event"),
+        (s, "read_range", "delete_sheet"),
+        (d, "read_document", "delete_range"),
+        (dr, "search_files", "delete_file"),
+    ]
+    for mod, read_tool, destructive_tool in cases:
+        tools = await mod.mcp.list_tools()
+        read_ann = _tool_by_name(tools, read_tool).annotations
+        assert read_ann is not None
+        assert read_ann.readOnlyHint is True
+
+        dest_ann = _tool_by_name(tools, destructive_tool).annotations
+        assert dest_ann is not None
+        assert dest_ann.readOnlyHint is False
+        assert dest_ann.destructiveHint is True
+
+
+@pytest.mark.anyio
+async def test_annotations_mutating_not_destructive():
+    from google_workspace_mcp.calendar import server as c
+    from google_workspace_mcp.docs import server as d
+    from google_workspace_mcp.drive import server as dr
+    from google_workspace_mcp.gmail import server as g
+    from google_workspace_mcp.sheets import server as s
+
+    cases = [
+        (g, "send_message"),
+        (c, "create_event"),
+        (s, "update_range"),
+        (d, "append_text"),
+        (dr, "upload_file"),
+    ]
+    for mod, write_tool in cases:
+        tools = await mod.mcp.list_tools()
+        ann = _tool_by_name(tools, write_tool).annotations
+        assert ann is not None
+        assert ann.readOnlyHint is False
+        assert ann.destructiveHint is False
+
+
+@pytest.mark.anyio
+async def test_common_tools_readonly_hint():
+    from google_workspace_mcp.calendar import server as c
+    from google_workspace_mcp.docs import server as d
+    from google_workspace_mcp.drive import server as dr
+    from google_workspace_mcp.gmail import server as g
+    from google_workspace_mcp.sheets import server as s
+
+    for mod in (g, c, s, d, dr):
+        tools = await mod.mcp.list_tools()
+        for name in ("list_accounts", "whoami", "auth_status"):
+            ann = _tool_by_name(tools, name).annotations
+            assert ann is not None
+            assert ann.readOnlyHint is True
+
+
+@pytest.mark.anyio
+async def test_no_output_schema_regression():
+    from google_workspace_mcp.calendar import server as c
+    from google_workspace_mcp.docs import server as d
+    from google_workspace_mcp.drive import server as dr
+    from google_workspace_mcp.gmail import server as g
+    from google_workspace_mcp.sheets import server as s
+
+    for mod in (g, c, s, d, dr):
+        tools = await mod.mcp.list_tools()
+        for tool in tools:
+            assert tool.outputSchema is None, tool.name
+

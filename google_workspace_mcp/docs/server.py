@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from ..core import build_server, register, get_api, run_tool, ok
+from ..core import build_server, get_api, ok, register, run_tool
 from .docs_api import DocsAPI
 
 mcp = build_server(
