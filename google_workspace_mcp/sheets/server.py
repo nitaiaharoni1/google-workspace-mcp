@@ -334,6 +334,14 @@ def format_table(account: str | None = None, spreadsheet_id: str = "", range: st
     return ok(resolved, data)
 
 
+@register(mcp, mutating=True)
+def optimize_layout(account: str | None = None, spreadsheet_id: str = "", range: str = "", max_column_width: int = 320, min_column_width: int = 48, resize_rows: bool = True) -> dict:
+    """Make a sheet readable in one call: size each column to its content (capped at max_column_width px), wrap only over-cap columns (top-aligned), and auto-fit row heights. Pass an A1 range or a bare tab name for the whole sheet. Use after writing data."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.optimize_layout(spreadsheet_id, range, max_column_width, min_column_width, resize_rows))
+    return ok(resolved, data)
+
+
 @register(mcp)
 def read_formulas(account: str | None = None, spreadsheet_id: str = "", range: str = "") -> dict:
     """Read formula strings from a range (A1 notation), e.g. '=SUM(A2:A10)'."""

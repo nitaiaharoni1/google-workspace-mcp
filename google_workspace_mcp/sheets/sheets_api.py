@@ -626,6 +626,86 @@ class SheetsAPI:
             "result": result,
         }
 
+    def _layout_requests(self, sheet_id, values, col_offset, row_start, row_end,
+                         min_width=48, max_width=320, resize_rows=True):
+        """Turn plan_column_layout output into batchUpdate requests.
+
+        Per column: set pixel width; set wrapStrategy WRAP + TOP alignment when
+        content exceeds the width cap, else OVERFLOW_CELL (normalizes previous
+        blanket wrapping). Optionally auto-fit row heights afterwards.
+        """
+        plans = plan_column_layout(values, min_width, max_width)
+        requests = []
+        for p in plans:
+            col = col_offset + p["index"]
+            requests.append({"updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
+                          "startIndex": col, "endIndex": col + 1},
+                "properties": {"pixelSize": p["width"]},
+                "fields": "pixelSize",
+            }})
+            cell_range = {"sheetId": sheet_id, "startRowIndex": row_start, "endRowIndex": row_end,
+                          "startColumnIndex": col, "endColumnIndex": col + 1}
+            if p["wrap"]:
+                requests.append({"repeatCell": {
+                    "range": cell_range,
+                    "cell": {"userEnteredFormat": {"wrapStrategy": "WRAP", "verticalAlignment": "TOP"}},
+                    "fields": "userEnteredFormat.wrapStrategy,userEnteredFormat.verticalAlignment",
+                }})
+            else:
+                requests.append({"repeatCell": {
+                    "range": cell_range,
+                    "cell": {"userEnteredFormat": {"wrapStrategy": "OVERFLOW_CELL"}},
+                    "fields": "userEnteredFormat.wrapStrategy",
+                }})
+        if resize_rows and values:
+            requests.append({"autoResizeDimensions": {"dimensions": {
+                "sheetId": sheet_id, "dimension": "ROWS",
+                "startIndex": row_start, "endIndex": row_end,
+            }}})
+        return plans, requests
+
+    def optimize_layout(self, spreadsheet_id, range, max_column_width=320,
+                        min_column_width=48, resize_rows=True):
+        """Size columns to content (capped), wrap only over-cap columns, auto-fit rows."""
+        meta = self.get_spreadsheet(spreadsheet_id)
+        if "!" in range:
+            sheet_name, sheet_id, grid, *_ = self._resolve_a1(spreadsheet_id, range, meta)
+            read_a1 = range
+            col_offset = grid.get("startColumnIndex", 0)
+            row_start = grid.get("startRowIndex", 0)
+            row_end_hint = grid.get("endRowIndex")
+        else:
+            sheet_name = range.strip("'\"")
+            matches = [s["properties"]["sheetId"] for s in meta.get("sheets", [])
+                       if s["properties"]["title"] == sheet_name]
+            if not matches:
+                raise ValueError(f"no sheet named {sheet_name!r}")
+            sheet_id = matches[0]
+            read_a1 = "'" + sheet_name.replace("'", "''") + "'"
+            col_offset = 0
+            row_start = 0
+            row_end_hint = None
+        values = self.read_range(spreadsheet_id, read_a1, "FORMATTED_VALUE").get("values") or []
+        row_end = row_end_hint or (row_start + len(values))
+        plans, requests = self._layout_requests(
+            sheet_id, values, col_offset, row_start, row_end,
+            min_column_width, max_column_width, resize_rows,
+        )
+        if not requests:
+            return {"sheet": sheet_name, "columns": [], "requests_sent": 0}
+        result = self._batch(spreadsheet_id, requests)
+        return {
+            "sheet": sheet_name,
+            "columns": [
+                {"column": _index_to_col(col_offset + p["index"]),
+                 "width": p["width"], "wrap": p["wrap"]}
+                for p in plans
+            ],
+            "requests_sent": len(requests),
+            "result": result,
+        }
+
     def write_formulas(self, spreadsheet_id, range, formulas, value_input_option="USER_ENTERED"):
         """Write formula strings (e.g. '=SUM(A2:A10)') to a range. Same as update_range with USER_ENTERED."""
         return self.update_range(spreadsheet_id, range, formulas, value_input_option)

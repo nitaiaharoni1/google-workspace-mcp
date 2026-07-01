@@ -586,6 +586,67 @@ class TestSheetsAPIDimensions:
         with pytest.raises(ValueError, match="invalid hex"):
             api.format_cells("sid", "Tab!A1", background_color="not-a-color")
 
+    def test_optimize_layout_range(self, api_with_meta):
+        api, svc = api_with_meta
+        svc.spreadsheets().values().get.return_value.execute.return_value = {
+            "values": [["Name", "Notes"], ["Ann", "x" * 100]],
+        }
+        out = api.optimize_layout("sid", "Tab!A1:B2")
+        requests = svc.spreadsheets().batchUpdate.call_args.kwargs["body"]["requests"]
+        # col A: snug width, no wrap (normalized to OVERFLOW_CELL)
+        assert requests[0]["updateDimensionProperties"] == {
+            "range": {"sheetId": 7, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 1},
+            "properties": {"pixelSize": 48},
+            "fields": "pixelSize",
+        }
+        assert requests[1]["repeatCell"]["cell"]["userEnteredFormat"] == {
+            "wrapStrategy": "OVERFLOW_CELL",
+        }
+        # col B: capped width + wrap, top-aligned
+        assert requests[2]["updateDimensionProperties"]["properties"]["pixelSize"] == 320
+        assert requests[3]["repeatCell"]["cell"]["userEnteredFormat"] == {
+            "wrapStrategy": "WRAP", "verticalAlignment": "TOP",
+        }
+        assert requests[3]["repeatCell"]["range"] == {
+            "sheetId": 7, "startRowIndex": 0, "endRowIndex": 2,
+            "startColumnIndex": 1, "endColumnIndex": 2,
+        }
+        # rows auto-fit last
+        assert requests[-1]["autoResizeDimensions"]["dimensions"] == {
+            "sheetId": 7, "dimension": "ROWS", "startIndex": 0, "endIndex": 2,
+        }
+        assert out["columns"] == [
+            {"column": "A", "width": 48, "wrap": False},
+            {"column": "B", "width": 320, "wrap": True},
+        ]
+        assert out["requests_sent"] == 5
+
+    def test_optimize_layout_bare_sheet_name(self, api_with_meta):
+        api, svc = api_with_meta
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["hi"]]}
+        api.optimize_layout("sid", "Tab")
+        svc.spreadsheets().values().get.assert_called_with(
+            spreadsheetId="sid", range="'Tab'", valueRenderOption="FORMATTED_VALUE",
+        )
+
+    def test_optimize_layout_unknown_sheet(self, api_with_meta):
+        api, _svc = api_with_meta
+        with pytest.raises(ValueError, match="no sheet named"):
+            api.optimize_layout("sid", "Nope")
+
+    def test_optimize_layout_empty_sheet_sends_nothing(self, api_with_meta):
+        api, svc = api_with_meta
+        svc.spreadsheets().values().get.return_value.execute.return_value = {}
+        out = api.optimize_layout("sid", "Tab")
+        assert out["requests_sent"] == 0
+
+    def test_optimize_layout_no_row_resize(self, api_with_meta):
+        api, svc = api_with_meta
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["hi"]]}
+        api.optimize_layout("sid", "Tab", resize_rows=False)
+        requests = svc.spreadsheets().batchUpdate.call_args.kwargs["body"]["requests"]
+        assert not any("autoResizeDimensions" in r for r in requests)
+
 
 class TestSheetsAPITextEditing:
     """Unit tests for within-cell / text-granular editing methods."""
@@ -820,6 +881,7 @@ async def test_list_tools_includes_expected(patched_server):
         "format_cells", "sort_range", "set_basic_filter", "clear_basic_filter",
         "merge_cells", "unmerge_cells", "add_banding", "update_banding", "delete_banding",
         "add_table", "update_table", "delete_table", "format_table", "read_formulas", "write_formulas",
+        "optimize_layout",
         "find_replace", "copy_paste", "cut_paste", "hide_columns", "hide_rows",
         # text editing
         "edit_cell", "transform_text", "regex_replace",
@@ -828,6 +890,15 @@ async def test_list_tools_includes_expected(patched_server):
         "list_accounts", "auth_status", "whoami",
     }
     assert expected.issubset(names), f"Missing tools: {expected - names}"
+
+
+@pytest.mark.anyio
+async def test_optimize_layout_tool(patched_server):
+    patched_server.optimize_layout.return_value = {"sheet": "Tab", "columns": [], "requests_sent": 0}
+    raw = await mcp.call_tool("optimize_layout", {"spreadsheet_id": "sid", "range": "Tab"})
+    payload = _parse_result(raw)
+    assert payload["ok"] is True
+    patched_server.optimize_layout.assert_called_once_with("sid", "Tab", 320, 48, True)
 
 
 @pytest.mark.anyio
