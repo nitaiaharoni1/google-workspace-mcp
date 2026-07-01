@@ -342,6 +342,14 @@ def optimize_layout(account: str | None = None, spreadsheet_id: str = "", range:
     return ok(resolved, data)
 
 
+@register(mcp, mutating=True)
+def write_table(account: str | None = None, spreadsheet_id: str = "", anchor: str = "", values: list[list] | None = None, style: str = "native", name: str | None = None, header_color: str = "#355468", first_band_color: str = "#FFFFFF", second_band_color: str = "#F3F3F3", max_column_width: int = 320) -> dict:
+    """Write a 2D array (first row = headers) at an anchor cell (e.g. 'Sheet1!A1') and make it readable in one shot: native Sheets table (style='native'), alternating-color banding (style='banded'), or values only (style='plain'), plus content-aware column widths and wrapping. Prefer this over update_range for tabular data. Overwrites cells in the target range. If a native table already overlaps the range, use style='banded' or update_table instead."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.write_table(spreadsheet_id, anchor, values or [], style, name, header_color, first_band_color, second_band_color, max_column_width))
+    return ok(resolved, data)
+
+
 @register(mcp)
 def read_formulas(account: str | None = None, spreadsheet_id: str = "", range: str = "") -> dict:
     """Read formula strings from a range (A1 notation), e.g. '=SUM(A2:A10)'."""

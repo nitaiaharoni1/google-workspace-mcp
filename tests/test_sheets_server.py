@@ -537,6 +537,65 @@ class TestSheetsAPIDimensions:
         assert wraps
         assert result["requests_sent"] == len(requests)
 
+    def test_write_table_native(self, api_with_meta):
+        api, svc = api_with_meta
+        svc.spreadsheets().values().update.return_value.execute.return_value = {"updatedCells": 4}
+        svc.spreadsheets().values().get.return_value.execute.return_value = {
+            "values": [["Name", "Age"], ["Ann", "7"]],
+        }
+        svc.spreadsheets().batchUpdate.return_value.execute.return_value = {
+            "replies": [{"addTable": {"table": {"tableId": "t1"}}}],
+        }
+        out = api.write_table("sid", "Tab!B2", [["Name", "Age"], ["Ann", "7"]])
+        # values written at the anchor-derived range
+        svc.spreadsheets().values().update.assert_called_with(
+            spreadsheetId="sid", range="'Tab'!B2:C3", valueInputOption="USER_ENTERED",
+            body={"values": [["Name", "Age"], ["Ann", "7"]]},
+        )
+        assert out["range"] == "'Tab'!B2:C3"
+        assert out["rows"] == 2 and out["columns"] == 2
+        assert out["tableId"] == "t1"
+        assert out["style"] == "native"
+        assert out["layout"]["requests_sent"] > 0
+        # an addTable request went out
+        add_table_calls = [
+            c for c in svc.spreadsheets().batchUpdate.call_args_list
+            if any("addTable" in r for r in c.kwargs["body"]["requests"])
+        ]
+        assert len(add_table_calls) == 1
+
+    def test_write_table_plain_skips_styling(self, api_with_meta):
+        api, svc = api_with_meta
+        svc.spreadsheets().values().update.return_value.execute.return_value = {}
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["a"]]}
+        out = api.write_table("sid", "Tab!A1", [["a"]], style="plain")
+        assert out["tableId"] is None
+        assert not any(
+            any("addTable" in r or "addBanding" in r for r in c.kwargs["body"]["requests"])
+            for c in svc.spreadsheets().batchUpdate.call_args_list
+        )
+
+    def test_write_table_rejects_range_anchor(self, api_with_meta):
+        api, _svc = api_with_meta
+        with pytest.raises(ValueError, match="single cell"):
+            api.write_table("sid", "Tab!A1:B2", [["a"]])
+
+    def test_write_table_rejects_empty_values(self, api_with_meta):
+        api, _svc = api_with_meta
+        with pytest.raises(ValueError, match="non-empty"):
+            api.write_table("sid", "Tab!A1", [])
+
+    def test_write_table_rejects_bad_style(self, api_with_meta):
+        api, _svc = api_with_meta
+        with pytest.raises(ValueError, match="native/banded/plain"):
+            api.write_table("sid", "Tab!A1", [["a"]], style="fancy")
+
+    def test_add_table_omits_empty_name(self, api_with_meta):
+        api, svc = api_with_meta
+        api.add_table("sid", "Tab!A1:B2", None)
+        req = svc.spreadsheets().batchUpdate.call_args.kwargs["body"]["requests"][0]
+        assert "name" not in req["addTable"]["table"]
+
     def test_add_table(self, api_with_meta):
         api, svc = api_with_meta
         api.add_table("sid", "Tab!A1:C10", "MyTable", column_names=["A", "B", "C"])
@@ -914,7 +973,7 @@ async def test_list_tools_includes_expected(patched_server):
         "format_cells", "sort_range", "set_basic_filter", "clear_basic_filter",
         "merge_cells", "unmerge_cells", "add_banding", "update_banding", "delete_banding",
         "add_table", "update_table", "delete_table", "format_table", "read_formulas", "write_formulas",
-        "optimize_layout",
+        "optimize_layout", "write_table",
         "find_replace", "copy_paste", "cut_paste", "hide_columns", "hide_rows",
         # text editing
         "edit_cell", "transform_text", "regex_replace",
@@ -932,6 +991,21 @@ async def test_optimize_layout_tool(patched_server):
     payload = _parse_result(raw)
     assert payload["ok"] is True
     patched_server.optimize_layout.assert_called_once_with("sid", "Tab", 320, 48, True)
+
+
+@pytest.mark.anyio
+async def test_write_table_tool(patched_server):
+    patched_server.write_table.return_value = {"range": "'Tab'!A1:B2", "tableId": "t1"}
+    raw = await mcp.call_tool("write_table", {
+        "spreadsheet_id": "sid", "anchor": "Tab!A1",
+        "values": [["Name", "Age"], ["Ann", "7"]],
+    })
+    payload = _parse_result(raw)
+    assert payload["ok"] is True
+    patched_server.write_table.assert_called_once_with(
+        "sid", "Tab!A1", [["Name", "Age"], ["Ann", "7"]],
+        "native", None, "#355468", "#FFFFFF", "#F3F3F3", 320,
+    )
 
 
 @pytest.mark.anyio

@@ -512,7 +512,6 @@ class SheetsAPI:
                   second_band_color="#F3F3F3", column_names=None):
         grid = self._a1_to_grid_range(spreadsheet_id, range)
         table = {
-            "name": name,
             "range": grid,
             "rowsProperties": {
                 "headerColorStyle": self._hex_to_color_style(header_color),
@@ -520,6 +519,8 @@ class SheetsAPI:
                 "secondBandColorStyle": self._hex_to_color_style(second_band_color),
             },
         }
+        if name:
+            table["name"] = name
         if column_names:
             table["columnProperties"] = [
                 {"columnIndex": i, "columnName": col_name} for i, col_name in enumerate(column_names)
@@ -705,6 +706,40 @@ class SheetsAPI:
             "requests_sent": len(requests),
             "result": result,
         }
+
+    def write_table(self, spreadsheet_id, anchor, values, style="native", name=None,
+                    header_color="#355468", first_band_color="#FFFFFF",
+                    second_band_color="#F3F3F3", max_column_width=320):
+        """Write values (first row = header) at an anchor cell, style them as a
+        table, and optimize the layout — one call from data to readable sheet."""
+        if not values or not any(row for row in values):
+            raise ValueError("write_table requires a non-empty 2D values array (first row = header)")
+        sheet_name, start_col, start_row, end_col, end_row = self._parse_a1_local(anchor)
+        if not (start_col and start_row and start_col == end_col and start_row == end_row):
+            raise ValueError(f"anchor must be a single cell like 'Sheet1!A1', got {anchor!r}")
+        n_rows = len(values)
+        n_cols = max(len(r) for r in values)
+        last_col = _index_to_col(_col_to_index(start_col) + n_cols - 1)
+        last_row = int(start_row) + n_rows - 1
+        cell_range = f"{start_col}{start_row}:{last_col}{last_row}"
+        full_range = self._quoted_sheet_range(sheet_name, cell_range) if sheet_name else cell_range
+        self.update_range(spreadsheet_id, full_range, values)
+        table_id = None
+        if style == "native":
+            reply = self.add_table(spreadsheet_id, full_range, name,
+                                   header_color, first_band_color, second_band_color)
+            replies = reply.get("replies") or []
+            if replies and replies[0].get("addTable"):
+                table_id = replies[0]["addTable"].get("table", {}).get("tableId")
+        elif style == "banded":
+            self.format_table(spreadsheet_id, full_range, header_color=header_color,
+                              first_band_color=first_band_color, second_band_color=second_band_color,
+                              auto_resize_columns=False)
+        elif style != "plain":
+            raise ValueError("style must be one of native/banded/plain")
+        layout = self.optimize_layout(spreadsheet_id, full_range, max_column_width=max_column_width)
+        return {"range": full_range, "rows": n_rows, "columns": n_cols,
+                "style": style, "tableId": table_id, "layout": layout}
 
     def write_formulas(self, spreadsheet_id, range, formulas, value_input_option="USER_ENTERED"):
         """Write formula strings (e.g. '=SUM(A2:A10)') to a range. Same as update_range with USER_ENTERED."""
