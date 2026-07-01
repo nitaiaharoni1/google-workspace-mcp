@@ -33,6 +33,20 @@ Every tool: takes `account`, resolves it, gets a cached per-account client,
 runs the Google call through shared error mapping, and returns
 `{"ok": true, "account": "<resolved>", "data": ...}`.
 
+### Docs (`gdocs-mcp`)
+
+- **Markdown in/out** — `create_document_from_markdown`, `append_markdown`, and
+  `replace_document_with_markdown` let an agent write plain markdown while Google
+  converts it to native headings, lists, links, and tables; `read_document_as_markdown`
+  round-trips it back.
+
+### Sheets (`gsheets-mcp`)
+
+- **Human-readable layouts** — `write_table` writes data and formats it as a native
+  table (or banded range) in one call; `optimize_layout` sizes every column to its
+  content with a width cap, wraps only what must wrap, and auto-fits row heights.
+  Header freezing is opt-in.
+
 ## Install
 
 ```bash
