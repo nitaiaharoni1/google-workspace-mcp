@@ -8,7 +8,10 @@ from .docs_api import DocsAPI
 
 mcp = build_server(
     "gdocs-mcp",
-    "Google Docs: create, read, and edit documents for one or more Google accounts.",
+    "Google Docs: create, read, and edit documents for one or more Google accounts. "
+    "For formatted content (headings, lists, tables, bold), prefer the markdown tools "
+    "(create_document_from_markdown, replace_document_with_markdown, append_markdown) "
+    "over element-by-element insert/format calls.",
 )
 
 
@@ -32,6 +35,13 @@ def read_document(account: str | None = None, document_id: str = "") -> dict:
 
 
 @register(mcp)
+def read_document_as_markdown(account: str | None = None, document_id: str = "") -> dict:
+    """Read a document as markdown, preserving headings, lists, tables, and links (unlike read_document's plain text)."""
+    api, resolved = _api(account)
+    return ok(resolved, run_tool(lambda: api.read_document_as_markdown(document_id)))
+
+
+@register(mcp)
 def get_content_map(account: str | None = None, document_id: str = "", include_headers_footers: bool = True) -> dict:
     """Return a structured index map of document elements (paragraphs, tables, indices, text previews)."""
     api, resolved = _api(account)
@@ -45,6 +55,27 @@ def create_document(account: str | None = None, title: str = "") -> dict:
     """Create a new (empty) Google Doc with the given title."""
     api, resolved = _api(account)
     return ok(resolved, run_tool(lambda: api.create_document(title)))
+
+
+@register(mcp, mutating=True)
+def create_document_from_markdown(account: str | None = None, title: str = "", markdown: str = "", folder_id: str | None = None) -> dict:
+    """Create a Google Doc from markdown text: headings, bold/italic, lists, links, and tables become native Docs formatting. Prefer this over create_document + insert/format calls for formatted content."""
+    api, resolved = _api(account)
+    return ok(resolved, run_tool(lambda: api.create_document_from_markdown(title, markdown, folder_id)))
+
+
+@register(mcp, mutating=True, destructive=True)
+def replace_document_with_markdown(account: str | None = None, document_id: str = "", markdown: str = "") -> dict:
+    """Replace a document's ENTIRE content by re-importing markdown. Comments/suggestions are lost."""
+    api, resolved = _api(account)
+    return ok(resolved, run_tool(lambda: api.replace_document_with_markdown(document_id, markdown)))
+
+
+@register(mcp, mutating=True, destructive=True)
+def append_markdown(account: str | None = None, document_id: str = "", markdown: str = "") -> dict:
+    """Append markdown to the end of a document. Round-trips the whole doc through markdown export/import, so elements markdown cannot express (comments, positioned images) are lost."""
+    api, resolved = _api(account)
+    return ok(resolved, run_tool(lambda: api.append_markdown(document_id, markdown)))
 
 
 @register(mcp, mutating=True)

@@ -499,3 +499,63 @@ async def test_tools_registered_and_account_param():
         assert "account" in (tools[name].inputSchema or {}).get("properties", {})
     # common tools present
     assert {"list_accounts", "whoami", "auth_status"}.issubset(tools)
+
+
+# --- markdown tools (server level) ---
+
+@pytest.fixture
+def patched_docs_server(monkeypatch):
+    fake = MagicMock(spec=DocsAPI)
+    monkeypatch.setattr(server, "_api", lambda account=None: (fake, "test@x.com"))
+    return fake
+
+
+@pytest.mark.anyio
+async def test_markdown_tools_registered():
+    tools = await server.mcp.list_tools()
+    names = {t.name for t in tools}
+    assert {
+        "create_document_from_markdown", "replace_document_with_markdown",
+        "append_markdown", "read_document_as_markdown",
+    } <= names
+
+
+@pytest.mark.anyio
+async def test_create_document_from_markdown_tool(patched_docs_server):
+    patched_docs_server.create_document_from_markdown.return_value = {"documentId": "D9"}
+    raw = await server.mcp.call_tool("create_document_from_markdown", {
+        "title": "Spec", "markdown": "# T",
+    })
+    payload = envelope(raw)
+    assert payload["ok"] is True
+    assert payload["account"] == "test@x.com"
+    assert payload["data"]["documentId"] == "D9"
+    patched_docs_server.create_document_from_markdown.assert_called_once_with("Spec", "# T", None)
+
+
+@pytest.mark.anyio
+async def test_replace_document_with_markdown_tool(patched_docs_server):
+    patched_docs_server.replace_document_with_markdown.return_value = {"replaced": True}
+    raw = await server.mcp.call_tool("replace_document_with_markdown", {
+        "document_id": "D1", "markdown": "# New",
+    })
+    assert envelope(raw)["ok"] is True
+    patched_docs_server.replace_document_with_markdown.assert_called_once_with("D1", "# New")
+
+
+@pytest.mark.anyio
+async def test_append_markdown_tool(patched_docs_server):
+    patched_docs_server.append_markdown.return_value = {"appended": True}
+    raw = await server.mcp.call_tool("append_markdown", {
+        "document_id": "D1", "markdown": "## More",
+    })
+    assert envelope(raw)["ok"] is True
+    patched_docs_server.append_markdown.assert_called_once_with("D1", "## More")
+
+
+@pytest.mark.anyio
+async def test_read_document_as_markdown_tool(patched_docs_server):
+    patched_docs_server.read_document_as_markdown.return_value = {"markdown": "# Hi"}
+    raw = await server.mcp.call_tool("read_document_as_markdown", {"document_id": "D1"})
+    assert envelope(raw)["data"]["markdown"] == "# Hi"
+    patched_docs_server.read_document_as_markdown.assert_called_once_with("D1")
