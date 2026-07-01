@@ -12,6 +12,30 @@ from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 GOOGLE_APPS_PREFIX = "application/vnd.google-apps."
 FOLDER_MIME = "application/vnd.google-apps.folder"
+DOCUMENT_MIME = "application/vnd.google-apps.document"
+SPREADSHEET_MIME = "application/vnd.google-apps.spreadsheet"
+PRESENTATION_MIME = "application/vnd.google-apps.presentation"
+
+# Local extensions -> source media mime when converting into Google-native files.
+CONVERSION_SOURCE_MIMES: dict[str, str] = {
+    ".md": "text/plain",
+    ".markdown": "text/plain",
+    ".txt": "text/plain",
+    ".html": "text/html",
+    ".htm": "text/html",
+    ".csv": "text/csv",
+    ".tsv": "text/tab-separated-values",
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+
+CONVERSION_DEFAULT_SOURCE: dict[str, str] = {
+    DOCUMENT_MIME: "text/plain",
+    SPREADSHEET_MIME: "text/csv",
+    PRESENTATION_MIME: "application/pdf",
+}
 
 FILE_LIST_FIELDS = "nextPageToken, files(id, name, mimeType, size, modifiedTime, parents)"
 FILE_METADATA_FIELDS = "id, name, mimeType, size, modifiedTime, parents, webViewLink, trashed, owners, shared"
@@ -74,6 +98,27 @@ def _resolve_export_mime(source_mime: str, fmt: str) -> str:
             f"allowed: {sorted(mapping)}"
         )
     return export_mime
+
+
+def _resolve_upload_mimes(local_path: str, mime_type: str | None) -> tuple[str | None, str]:
+    """Return (metadata mimeType for create body, media upload mimeType).
+
+    When ``mime_type`` is a Google-native target (Doc/Sheet/Slide), Drive converts
+    the uploaded bytes from the resolved *source* media type.
+    """
+    guessed, _ = mimetypes.guess_type(local_path)
+    ext = os.path.splitext(local_path)[1].lower()
+
+    if mime_type and _is_google_native(mime_type):
+        if mime_type == FOLDER_MIME:
+            raise ValueError("upload_file cannot create a folder; use create_folder")
+        source_mime = CONVERSION_SOURCE_MIMES.get(ext) or guessed
+        if not source_mime or _is_google_native(source_mime):
+            source_mime = CONVERSION_DEFAULT_SOURCE.get(mime_type, "text/plain")
+        return mime_type, source_mime
+
+    media_mime = mime_type or guessed or "application/octet-stream"
+    return None, media_mime
 
 
 def normalize_drive_change(change):
@@ -266,9 +311,10 @@ class DriveAPI:
         if not os.path.isfile(local_path):
             raise ValueError(f"local path does not exist or is not a file: {local_path!r}")
         file_name = name or os.path.basename(local_path)
-        guessed, _ = mimetypes.guess_type(local_path)
-        media_mime = mime_type or guessed or "application/octet-stream"
+        target_mime, media_mime = _resolve_upload_mimes(local_path, mime_type)
         body: dict = {"name": file_name}
+        if target_mime:
+            body["mimeType"] = target_mime
         if parent_id:
             body["parents"] = [parent_id]
         media = MediaFileUpload(local_path, mimetype=media_mime, resumable=True)

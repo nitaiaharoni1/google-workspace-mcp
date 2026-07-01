@@ -209,6 +209,38 @@ def test_upload_file(monkeypatch, tmp_path):
     assert out["id"] == "N1"
     _, kwargs = svc.files().create.call_args
     assert kwargs["body"]["parents"] == ["P1"]
+    assert "mimeType" not in kwargs["body"]
+
+
+def test_upload_file_converts_to_google_doc(monkeypatch, tmp_path):
+    api, svc = _api_with_mock(monkeypatch)
+    f = tmp_path / "plan.md"
+    f.write_text("# Title\n\nBody")
+    svc.files().create().execute.return_value = {
+        "id": "D1",
+        "name": "plan.md",
+        "mimeType": "application/vnd.google-apps.document",
+    }
+    out = api.upload_file(
+        str(f),
+        mime_type="application/vnd.google-apps.document",
+        name="Acquisition Meetings Plan",
+        parent_id="P1",
+    )
+    assert out["mimeType"] == "application/vnd.google-apps.document"
+    _, kwargs = svc.files().create.call_args
+    assert kwargs["body"]["mimeType"] == "application/vnd.google-apps.document"
+    assert kwargs["body"]["name"] == "Acquisition Meetings Plan"
+    assert kwargs["body"]["parents"] == ["P1"]
+    assert kwargs["media_body"].mimetype() == "text/plain"
+
+
+def test_upload_file_rejects_folder_target(monkeypatch, tmp_path):
+    api, _svc = _api_with_mock(monkeypatch)
+    f = tmp_path / "x.txt"
+    f.write_text("x")
+    with pytest.raises(ValueError, match="create_folder"):
+        api.upload_file(str(f), mime_type="application/vnd.google-apps.folder")
 
 
 def test_create_folder(monkeypatch):

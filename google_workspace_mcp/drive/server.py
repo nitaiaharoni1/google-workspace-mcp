@@ -163,7 +163,11 @@ def upload_file(
     parent_id: str | None = None,
     mime_type: str | None = None,
 ) -> dict:
-    """Upload a local file to Drive. Optional parent_id and explicit mime_type."""
+    """Upload a local file to Drive. Optional parent_id and explicit mime_type.
+
+    Set mime_type to a Google Workspace type (e.g. application/vnd.google-apps.document)
+    to upload and convert a local file into a native Doc, Sheet, or Slide.
+    """
     api, resolved = _api(account)
     data = run_tool(
         lambda: api.upload_file(local_path, name=name, parent_id=parent_id, mime_type=mime_type)
