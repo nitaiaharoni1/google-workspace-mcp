@@ -6,7 +6,10 @@ from .sheets_api import SheetsAPI
 
 mcp = build_server(
     "gsheets-mcp",
-    "Google Sheets: read/write values, formulas, filters, and table formatting (banding, wrap, column sizing) for one or more accounts. Ranges use A1 notation.",
+    "Google Sheets: read/write values, formulas, filters, and table formatting for one or more accounts. "
+    "Ranges use A1 notation. When writing tabular data, prefer write_table (or update_range followed by "
+    "format_table / optimize_layout) so the sheet stays human-readable: content-aware column widths, "
+    "wrapped long text, alternating row colors. Do not freeze rows/columns unless the user asks.",
 )
 
 
@@ -216,7 +219,7 @@ def hide_rows(account: str | None = None, spreadsheet_id: str = "", range: str =
 
 @register(mcp, mutating=True)
 def freeze_panes(account: str | None = None, spreadsheet_id: str = "", range: str = "", rows: int | None = None, cols: int | None = None) -> dict:
-    """Freeze the first N rows and/or columns of the sheet containing the given range (A1 notation). Pass 0 to unfreeze."""
+    """Freeze the first N rows and/or columns of the sheet containing the given range (A1 notation). Pass 0 to unfreeze. Rarely needed: only freeze when the user explicitly asks, or headers genuinely scroll out of view on a very large sheet."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.freeze_panes(spreadsheet_id, range, rows, cols))
     return ok(resolved, data)
