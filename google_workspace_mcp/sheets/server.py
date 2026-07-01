@@ -327,10 +327,10 @@ def update_table(account: str | None = None, spreadsheet_id: str = "", table_id:
 
 
 @register(mcp, mutating=True)
-def format_table(account: str | None = None, spreadsheet_id: str = "", range: str = "", header_color: str = "#355468", header_text_color: str = "#FFFFFF", first_band_color: str = "#FFFFFF", second_band_color: str = "#F3F3F3", wrap: bool = True, auto_resize_columns: bool = True, add_filter: bool = True, add_borders: bool = True, freeze_header: bool = True) -> dict:
-    """One-shot table styling: formatted header, alternating row colors, text wrap, auto column width, filter dropdowns, borders, and frozen header row."""
+def format_table(account: str | None = None, spreadsheet_id: str = "", range: str = "", header_color: str = "#355468", header_text_color: str = "#FFFFFF", first_band_color: str = "#FFFFFF", second_band_color: str = "#F3F3F3", wrap: bool = True, auto_resize_columns: bool = True, add_filter: bool = True, add_borders: bool = True, freeze_header: bool = False, max_column_width: int = 320) -> dict:
+    """One-shot table styling: formatted header, alternating row colors, filter dropdowns, borders, and content-aware column widths (capped at max_column_width px; over-cap columns wrap). Set freeze_header=True only if the user asks for frozen headers."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.format_table(spreadsheet_id, range, header_color, header_text_color, first_band_color, second_band_color, wrap, auto_resize_columns, add_filter, add_borders, freeze_header))
+    data = run_tool(lambda: api.format_table(spreadsheet_id, range, header_color, header_text_color, first_band_color, second_band_color, wrap, auto_resize_columns, add_filter, add_borders, freeze_header, max_column_width))
     return ok(resolved, data)
 
 

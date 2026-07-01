@@ -570,7 +570,7 @@ class SheetsAPI:
 
     def format_table(self, spreadsheet_id, range, header_color="#355468", header_text_color="#FFFFFF",
                      first_band_color="#FFFFFF", second_band_color="#F3F3F3", wrap=True, auto_resize_columns=True,
-                     add_filter=True, add_borders=True, freeze_header=True):
+                     add_filter=True, add_borders=True, freeze_header=False, max_column_width=320):
         """Apply common table styling in a single batchUpdate: header, bands, wrap, filter, borders, sizing."""
         meta = self.get_spreadsheet(spreadsheet_id)
         sheet_name, sheet_id, grid, start_row, end_row, start_col, end_col = self._resolve_a1(
@@ -595,7 +595,7 @@ class SheetsAPI:
                 grid, header_color=header_color,
                 first_band_color=first_band_color, second_band_color=second_band_color,
             ))
-            if wrap:
+            if wrap and not auto_resize_columns:
                 requests.append(self._format_cells_request(data_grid, wrap=True))
         if add_filter:
             requests.append({"setBasicFilter": {"filter": {"range": grid}}})
@@ -606,13 +606,13 @@ class SheetsAPI:
                 "top": border, "bottom": border, "left": border, "right": border,
                 "innerHorizontal": border, "innerVertical": border,
             }})
-        if auto_resize_columns and start_col and end_col:
-            col_start = grid.get("startColumnIndex")
-            col_end = grid.get("endColumnIndex")
-            if col_start is not None and col_end is not None:
-                requests.append({"autoResizeDimensions": {
-                    "dimensions": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": col_start, "endIndex": col_end},
-                }})
+        if auto_resize_columns and grid.get("startColumnIndex") is not None:
+            values = self.read_range(spreadsheet_id, range, "FORMATTED_VALUE").get("values") or []
+            _, layout = self._layout_requests(
+                sheet_id, values, grid["startColumnIndex"],
+                start_row - 1, end_row, max_width=max_column_width,
+            )
+            requests.extend(layout)
         if freeze_header:
             requests.append({"updateSheetProperties": {
                 "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 1}},

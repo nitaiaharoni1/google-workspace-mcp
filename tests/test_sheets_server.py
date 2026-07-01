@@ -490,19 +490,52 @@ class TestSheetsAPIDimensions:
         )
         assert result["values"] == [["=SUM(B2:B10)"]]
 
-    def test_format_table_batches_single_request(self, api_with_meta):
+    def test_format_table_smart_sizing_no_freeze(self, api_with_meta):
         api, svc = api_with_meta
-        result = api.format_table("sid", "Tab!A1:C5")
-        call = svc.spreadsheets().batchUpdate.call_args
-        requests = call.kwargs["body"]["requests"]
-        assert len(requests) >= 5
-        assert requests[0]["repeatCell"]["range"]["startRowIndex"] == 0
+        svc.spreadsheets().values().get.return_value.execute.return_value = {
+            "values": [["H1", "H2"], ["v", "x" * 100]],
+        }
+        result = api.format_table("sid", "Tab!A1:B2")
+        requests = svc.spreadsheets().batchUpdate.call_args.kwargs["body"]["requests"]
+        # header styling + banding still present
         assert requests[0]["repeatCell"]["range"]["endRowIndex"] == 1
         assert any("addBanding" in r for r in requests)
         assert any("setBasicFilter" in r for r in requests)
-        assert any("autoResizeDimensions" in r for r in requests)
+        # capped per-column widths replace unbounded column auto-resize
+        widths = [r["updateDimensionProperties"]["properties"]["pixelSize"]
+                  for r in requests if "updateDimensionProperties" in r]
+        assert widths == [48, 320]
+        assert not any(
+            r.get("autoResizeDimensions", {}).get("dimensions", {}).get("dimension") == "COLUMNS"
+            for r in requests
+        )
+        # rows auto-fit; no frozen header by default
+        assert any(
+            r.get("autoResizeDimensions", {}).get("dimensions", {}).get("dimension") == "ROWS"
+            for r in requests
+        )
+        assert not any("updateSheetProperties" in r for r in requests)
         assert result["requests_sent"] == len(requests)
-        svc.spreadsheets().get.assert_called_once()
+
+    def test_format_table_freeze_header_opt_in(self, api_with_meta):
+        api, svc = api_with_meta
+        svc.spreadsheets().values().get.return_value.execute.return_value = {"values": [["H"]]}
+        api.format_table("sid", "Tab!A1:A1", freeze_header=True)
+        requests = svc.spreadsheets().batchUpdate.call_args.kwargs["body"]["requests"]
+        frozen = [r for r in requests if "updateSheetProperties" in r]
+        assert frozen[0]["updateSheetProperties"]["properties"]["gridProperties"] == {"frozenRowCount": 1}
+
+    def test_format_table_no_auto_resize_uses_blanket_wrap(self, api_with_meta):
+        api, svc = api_with_meta
+        result = api.format_table("sid", "Tab!A1:B3", auto_resize_columns=False)
+        requests = svc.spreadsheets().batchUpdate.call_args.kwargs["body"]["requests"]
+        svc.spreadsheets().values().get.assert_not_called()
+        assert not any("updateDimensionProperties" in r for r in requests)
+        # data rows get the blanket wrap (legacy behavior)
+        wraps = [r for r in requests if "repeatCell" in r
+                 and r["repeatCell"]["cell"]["userEnteredFormat"].get("wrapStrategy") == "WRAP"]
+        assert wraps
+        assert result["requests_sent"] == len(requests)
 
     def test_add_table(self, api_with_meta):
         api, svc = api_with_meta
