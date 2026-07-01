@@ -6,6 +6,55 @@ import re
 import google_auth_core as core
 from google.auth.transport.requests import Request as GoogleAuthRequest
 
+# Width heuristic for the default Sheets font (Arial 10):
+# ~7 px per character plus ~14 px of cell padding/border.
+CHAR_PX = 7
+CELL_PADDING_PX = 14
+
+
+def _col_to_index(letters):
+    idx = 0
+    for ch in letters:
+        idx = idx * 26 + (ord(ch.upper()) - ord("A") + 1)
+    return idx - 1
+
+
+def _index_to_col(idx):
+    letters = ""
+    idx += 1
+    while idx:
+        idx, rem = divmod(idx - 1, 26)
+        letters = chr(ord("A") + rem) + letters
+    return letters
+
+
+def plan_column_layout(values, min_width=48, max_width=320):
+    """Pick a pixel width and wrap flag per column from formatted cell values.
+
+    Width fits the longest line in the column ("auto-fit"), clamped to
+    [min_width, max_width]; columns whose content exceeds the cap are flagged
+    for wrapping instead of growing wider. Empty columns are skipped so their
+    existing width is left untouched. Returns [{"index", "width", "wrap"}].
+    """
+    n_cols = max((len(r) for r in values), default=0)
+    plans = []
+    for col in range(n_cols):
+        max_len = 0
+        for row in values:
+            cell = row[col] if col < len(row) else ""
+            text = cell if isinstance(cell, str) else str(cell)
+            for line in text.splitlines():
+                max_len = max(max_len, len(line))
+        if max_len == 0:
+            continue
+        needed = CELL_PADDING_PX + CHAR_PX * max_len
+        plans.append({
+            "index": col,
+            "width": max(min_width, min(max_width, needed)),
+            "wrap": needed > max_width,
+        })
+    return plans
+
 
 class SheetsAPI:
     def __init__(self, account=None):
@@ -98,12 +147,6 @@ class SheetsAPI:
         start, _, end = cell_part.partition(":")
         end = end or start
 
-        def col_to_index(letters):
-            idx = 0
-            for ch in letters:
-                idx = idx * 26 + (ord(ch.upper()) - ord("A") + 1)
-            return idx - 1
-
         def split_cell(cell):
             letters = "".join(c for c in cell if c.isalpha())
             digits = "".join(c for c in cell if c.isdigit())
@@ -112,9 +155,9 @@ class SheetsAPI:
         start_letters, start_digits = split_cell(start)
         end_letters, end_digits = split_cell(end)
         if start_letters:
-            grid["startColumnIndex"] = col_to_index(start_letters)
+            grid["startColumnIndex"] = _col_to_index(start_letters)
         if end_letters:
-            grid["endColumnIndex"] = col_to_index(end_letters) + 1
+            grid["endColumnIndex"] = _col_to_index(end_letters) + 1
         if start_digits:
             grid["startRowIndex"] = int(start_digits) - 1
         if end_digits:

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from google_workspace_mcp.sheets import server
-from google_workspace_mcp.sheets.sheets_api import SheetsAPI
+from google_workspace_mcp.sheets.sheets_api import SheetsAPI, plan_column_layout
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Fixture
@@ -168,6 +168,50 @@ class TestSheetsAPIUnit:
             spreadsheetId="sid", includeGridData=False
         )
         assert result["spreadsheetId"] == "sid"
+
+
+class TestPlanColumnLayout:
+    """Pure width/wrap heuristic: clamp(14 + 7*chars, min, max); wrap past the cap."""
+
+    def test_short_columns_get_snug_min_width(self):
+        plans = plan_column_layout([["Name", "Age"], ["Ann", "7"], ["Bob", "12"]])
+        assert plans == [
+            {"index": 0, "width": 48, "wrap": False},
+            {"index": 1, "width": 48, "wrap": False},
+        ]
+
+    def test_medium_column_fits_content(self):
+        # longest cell 20 chars -> 14 + 7*20 = 154
+        plans = plan_column_layout([["Header"], ["x" * 20]])
+        assert plans == [{"index": 0, "width": 154, "wrap": False}]
+
+    def test_long_text_capped_and_wrapped(self):
+        plans = plan_column_layout([["Notes"], ["x" * 100]])
+        assert plans == [{"index": 0, "width": 320, "wrap": True}]
+
+    def test_multiline_cell_uses_longest_line(self):
+        # longest LINE is 30 chars -> 14 + 210 = 224, no wrap needed
+        plans = plan_column_layout([["h"], ["short\n" + "y" * 30]])
+        assert plans == [{"index": 0, "width": 224, "wrap": False}]
+
+    def test_empty_column_skipped(self):
+        plans = plan_column_layout([["a", ""], ["b", ""]])
+        assert [p["index"] for p in plans] == [0]
+
+    def test_numbers_are_stringified(self):
+        plans = plan_column_layout([[12345678]])
+        assert plans == [{"index": 0, "width": 70, "wrap": False}]
+
+    def test_ragged_rows_use_widest_row(self):
+        plans = plan_column_layout([["a"], ["b", "cc"]])
+        assert [p["index"] for p in plans] == [0, 1]
+
+    def test_custom_caps(self):
+        plans = plan_column_layout([["x" * 100]], min_width=60, max_width=200)
+        assert plans == [{"index": 0, "width": 200, "wrap": True}]
+
+    def test_empty_values(self):
+        assert plan_column_layout([]) == []
 
 
 class TestSheetsAPIDimensions:
