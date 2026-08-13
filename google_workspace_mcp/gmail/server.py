@@ -7,6 +7,7 @@ from .changes_api import GmailChangesAPI
 mcp = build_server(
     "gmail-mcp",
     "Gmail: read, search, send, draft, label, and manage messages for one or more Google accounts.",
+    service_name="gmail",
 )
 
 
@@ -77,11 +78,18 @@ def search_messages(
 def get_message(
     account: str | None = None,
     message_id: str = "",
-    format: str = "full",
+    format: str = "text",
 ) -> dict:
-    """Get a specific message by ID (format: full, metadata, minimal, or raw)."""
+    """Get a specific message by ID.
+
+    format: text (default, readable body), full (raw MIME), metadata, minimal, or raw. Use text unless you need MIME parts.
+    """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.get_message(message_id, format=format))
+    kind = (format or "text").strip().lower()
+    if kind == "text":
+        data = run_tool(lambda: api.get_message_text(message_id))
+    else:
+        data = run_tool(lambda: api.get_message(message_id, format=kind))
     return ok(resolved, data)
 
 
@@ -107,14 +115,18 @@ def list_threads(
 def get_thread(
     account: str | None = None,
     thread_id: str = "",
-    format: str = "full",
+    format: str = "text",
 ) -> dict:
     """Get a whole conversation (all messages in the thread) by ID in one call.
 
-    format: full, metadata, or minimal.
+    format: text (default, readable bodies), full (raw MIME), metadata, or minimal. Use text unless you need MIME parts.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.get_thread(thread_id, format=format))
+    kind = (format or "text").strip().lower()
+    if kind == "text":
+        data = run_tool(lambda: api.get_thread_text(thread_id))
+    else:
+        data = run_tool(lambda: api.get_thread(thread_id, format=kind))
     return ok(resolved, data)
 
 

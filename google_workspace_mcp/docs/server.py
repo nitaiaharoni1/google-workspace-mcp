@@ -12,6 +12,7 @@ mcp = build_server(
     "For formatted content (headings, lists, tables, bold), prefer the markdown tools "
     "(create_document_from_markdown, replace_document_with_markdown, append_markdown) "
     "over element-by-element insert/format calls.",
+    service_name="docs",
 )
 
 
@@ -246,7 +247,10 @@ def format_table_cells(account: str | None = None, document_id: str = "", table_
 
 @register(mcp, mutating=True)
 def insert_page_number(account: str | None = None, document_id: str = "", footer_id: str = "", index: int = 0) -> dict:
-    """Insert a dynamic page number into an existing footer (footer_id from setup_footer/create_footer)."""
+    """The public Google Docs API currently rejects insertPageNumber (400 Unknown name).
+
+    Insert a dynamic page number into an existing footer (footer_id from setup_footer/create_footer).
+    """
     api, resolved = _api(account)
     data = run_tool(lambda: api.insert_page_number(document_id, footer_id, index))
     return ok(resolved, data)
@@ -268,10 +272,13 @@ def batch_update(account: str | None = None, document_id: str = "", requests: li
 
 
 @register(mcp, mutating=True)
-def insert_sheets_chart(account: str | None = None, document_id: str = "", spreadsheet_id: str = "", chart_id: int = 0, index: int = 1, width_pt: float = 468, height_pt: float = 280) -> dict:
-    """Export a Google Sheets chart as PNG and insert it into the document."""
+def insert_sheets_chart(account: str | None = None, document_id: str = "", spreadsheet_id: str = "", chart_id: int = 0, index: int = 1, width_pt: float = 468, height_pt: float = 280, make_public: bool = False) -> dict:
+    """Insert a Sheets chart. Default refuses. make_public=True uploads a PNG, grants anyone/reader, and returns fileId so you can revoke it.
+
+    Docs can only fetch a public image URL. Pass make_public=True to publish.
+    """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.insert_sheets_chart(document_id, spreadsheet_id, chart_id, index, width_pt, height_pt, account=resolved))
+    data = run_tool(lambda: api.insert_sheets_chart(document_id, spreadsheet_id, chart_id, index, width_pt, height_pt, account=resolved, make_public=make_public))
     return ok(resolved, data)
 
 
@@ -304,6 +311,64 @@ def delete_footer(account: str | None = None, document_id: str = "", footer_id: 
     """Delete a footer by its footerId."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.delete_footer(document_id, footer_id))
+    return ok(resolved, data)
+
+
+@register(mcp)
+def list_comments(
+    account: str | None = None,
+    document_id: str = "",
+    include_deleted: bool = False,
+    page_size: int = 20,
+    page_token: str | None = None,
+) -> dict:
+    """List comment threads on a document (Drive discussions, not in-editor highlights).
+
+    Pass page_token from a previous response's next_page_token to continue.
+    """
+    api, resolved = _api(account)
+    raw = run_tool(lambda: api.list_comments(document_id, include_deleted, page_size, page_token))
+    next_token = raw.pop("nextPageToken", None)
+    return ok(resolved, raw, next_page_token=next_token)
+
+
+@register(mcp, mutating=True)
+def add_comment(
+    account: str | None = None,
+    document_id: str = "",
+    content: str = "",
+    start_index: int | None = None,
+    end_index: int | None = None,
+    quote: str | None = None,
+    occurrence: int = 1,
+) -> dict:
+    """Add a comment on a sentence or words via quote (or indexes). Google will not highlight in the editor; the comment quotes those words and remembers the range."""
+    api, resolved = _api(account)
+    data = run_tool(
+        lambda: api.add_comment(document_id, content, start_index, end_index, quote, occurrence)
+    )
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def reply_to_comment(
+    account: str | None = None,
+    document_id: str = "",
+    comment_id: str = "",
+    content: str | None = None,
+    action: str | None = None,
+) -> dict:
+    """Reply to a document discussion, or pass action='resolve' / 'reopen'."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.reply_to_comment(document_id, comment_id, content, action))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True, destructive=True)
+def delete_comment(account: str | None = None, document_id: str = "", comment_id: str = "") -> dict:
+    """Delete a document discussion thread."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.delete_comment(document_id, comment_id))
     return ok(resolved, data)
 
 

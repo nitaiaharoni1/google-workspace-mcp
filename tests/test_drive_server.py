@@ -11,8 +11,11 @@ from mcp.types import TextContent
 
 from google_workspace_mcp.drive import server
 from google_workspace_mcp.drive.drive_api import (
+    COMMENT_FIELDS,
+    COMMENT_LIST_FIELDS,
     DOCUMENT_MIME,
     EXPORT_FORMATS,
+    REPLY_FIELDS,
     TEXT_READ_MAX_BYTES,
     DriveAPI,
     _resolve_export_mime,
@@ -58,6 +61,21 @@ def test_search_files_builds_query(monkeypatch):
     assert "fullText contains 'budget'" in q
     assert kwargs["pageSize"] == 25
     assert "pageToken" not in kwargs
+    assert kwargs["supportsAllDrives"] is True
+    assert kwargs["includeItemsFromAllDrives"] is True
+    assert "driveId" not in kwargs
+    assert "corpora" not in kwargs
+
+
+def test_search_files_drive_id_sets_corpora(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.files().list().execute.return_value = {"files": []}
+    api.search_files(name="report", drive_id="SD1")
+    _, kwargs = svc.files().list.call_args
+    assert kwargs["driveId"] == "SD1"
+    assert kwargs["corpora"] == "drive"
+    assert kwargs["supportsAllDrives"] is True
+    assert kwargs["includeItemsFromAllDrives"] is True
 
 
 def test_search_files_passes_page_token(monkeypatch):
@@ -69,6 +87,17 @@ def test_search_files_passes_page_token(monkeypatch):
     assert out["nextPageToken"] == "drv2"
 
 
+def test_list_files_drive_id_sets_corpora(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.files().list().execute.return_value = {"files": []}
+    api.list_files(drive_id="SD1")
+    _, kwargs = svc.files().list.call_args
+    assert kwargs["driveId"] == "SD1"
+    assert kwargs["corpora"] == "drive"
+    assert kwargs["supportsAllDrives"] is True
+    assert kwargs["includeItemsFromAllDrives"] is True
+
+
 def test_list_files_in_folder(monkeypatch):
     api, svc = _api_with_mock(monkeypatch)
     svc.files().list().execute.return_value = {"files": []}
@@ -77,6 +106,9 @@ def test_list_files_in_folder(monkeypatch):
     assert "'F1' in parents" in kwargs["q"]
     assert kwargs["orderBy"] == "modifiedTime desc"
     assert kwargs["pageSize"] == 10
+    assert kwargs["supportsAllDrives"] is True
+    assert kwargs["includeItemsFromAllDrives"] is True
+    assert "corpora" not in kwargs
 
 
 def test_list_files_passes_page_token(monkeypatch):
@@ -88,12 +120,28 @@ def test_list_files_passes_page_token(monkeypatch):
     assert out["nextPageToken"] == "nxt"
 
 
+def test_list_drives(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.drives().list().execute.return_value = {
+        "drives": [{"id": "SD1", "name": "Team"}],
+        "nextPageToken": "d2",
+    }
+    out = api.list_drives(page_size=10, page_token="d1")
+    _, kwargs = svc.drives().list.call_args
+    assert kwargs["pageSize"] == 10
+    assert kwargs["pageToken"] == "d1"
+    assert kwargs["fields"] == "nextPageToken, drives(id, name)"
+    assert out["nextPageToken"] == "d2"
+
+
 def test_get_file(monkeypatch):
     api, svc = _api_with_mock(monkeypatch)
     svc.files().get().execute.return_value = {"id": "F1", "name": "doc.txt"}
     out = api.get_file("F1")
     assert out["name"] == "doc.txt"
-    svc.files().get.assert_called_with(fileId="F1", fields=svc.files().get.call_args.kwargs.get("fields", object()))
+    _, kwargs = svc.files().get.call_args
+    assert kwargs["fileId"] == "F1"
+    assert kwargs["supportsAllDrives"] is True
 
 
 def test_download_file_writes_binary(monkeypatch, tmp_path):
@@ -297,6 +345,7 @@ def test_share_file_email(monkeypatch):
     assert out["role"] == "reader"
     _, kwargs = svc.permissions().create.call_args
     assert kwargs["body"]["emailAddress"] == "friend@x.com"
+    assert kwargs["supportsAllDrives"] is True
 
 
 def test_share_file_anyone(monkeypatch):
@@ -305,6 +354,7 @@ def test_share_file_anyone(monkeypatch):
     api.share_file("F1", anyone=True, role="reader")
     _, kwargs = svc.permissions().create.call_args
     assert kwargs["body"]["type"] == "anyone"
+    assert "sendNotificationEmail" not in kwargs
 
 
 def test_list_permissions(monkeypatch):
@@ -313,8 +363,99 @@ def test_list_permissions(monkeypatch):
     api.list_permissions("F1")
     svc.permissions().list.assert_called_with(
         fileId="F1",
-        fields="permissions(id, type, role, emailAddress, displayName)",
+        fields="nextPageToken, permissions(id, type, role, emailAddress, displayName)",
+        supportsAllDrives=True,
     )
+
+
+def test_list_permissions_pages_all(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.permissions().list().execute.side_effect = [
+        {"permissions": [{"id": "p1"}], "nextPageToken": "n2"},
+        {"permissions": [{"id": "p2"}]},
+    ]
+    out = api.list_permissions("F1")
+    assert [p["id"] for p in out["permissions"]] == ["p1", "p2"]
+    list_calls = [
+        kwargs for args, kwargs in svc.permissions().list.call_args_list if kwargs
+    ]
+    assert len(list_calls) == 2
+    assert list_calls[1]["pageToken"] == "n2"
+
+
+def test_unshare_file_by_permission_id(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.permissions().delete().execute.return_value = None
+    out = api.unshare_file("F1", permission_id="perm1")
+    assert out == {"fileId": "F1", "permissionId": "perm1", "removed": True}
+    _, kwargs = svc.permissions().delete.call_args
+    assert kwargs["fileId"] == "F1"
+    assert kwargs["permissionId"] == "perm1"
+    assert kwargs["supportsAllDrives"] is True
+    svc.permissions().list.assert_not_called()
+
+
+def test_unshare_file_by_email_case_insensitive(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.permissions().list().execute.return_value = {
+        "permissions": [
+            {"id": "p1", "type": "user", "emailAddress": "Friend@X.com"},
+        ],
+    }
+    svc.permissions().delete().execute.return_value = None
+    out = api.unshare_file("F1", email="friend@x.com")
+    assert out["permissionId"] == "p1"
+    _, kwargs = svc.permissions().delete.call_args
+    assert kwargs["permissionId"] == "p1"
+    assert kwargs["supportsAllDrives"] is True
+
+
+def test_unshare_file_anyone(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.permissions().list().execute.return_value = {
+        "permissions": [
+            {"id": "anyone1", "type": "anyone", "role": "reader"},
+        ],
+    }
+    svc.permissions().delete().execute.return_value = None
+    out = api.unshare_file("F1", anyone=True)
+    assert out["permissionId"] == "anyone1"
+
+
+def test_unshare_file_requires_identifier(monkeypatch):
+    api, _ = _api_with_mock(monkeypatch)
+    with pytest.raises(ValueError, match="permission_id, email, or anyone"):
+        api.unshare_file("F1")
+
+
+def test_unshare_file_no_matching_permission(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.permissions().list().execute.return_value = {"permissions": []}
+    with pytest.raises(ValueError, match="no matching permission"):
+        api.unshare_file("F1", email="missing@x.com")
+
+
+def test_unshare_file_pages_until_match(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.permissions().list().execute.side_effect = [
+        {
+            "permissions": [{"id": "p1", "type": "user", "emailAddress": "other@x.com"}],
+            "nextPageToken": "p2",
+        },
+        {
+            "permissions": [{"id": "p2", "type": "user", "emailAddress": "friend@x.com"}],
+        },
+    ]
+    svc.permissions().delete().execute.return_value = None
+    out = api.unshare_file("F1", email="friend@x.com")
+    assert out["permissionId"] == "p2"
+    list_calls = [
+        kwargs for args, kwargs in svc.permissions().list.call_args_list if kwargs
+    ]
+    assert len(list_calls) == 2
+    assert "pageToken" not in list_calls[0]
+    assert list_calls[1]["pageToken"] == "p2"
+    assert "nextPageToken" in list_calls[0]["fields"]
 
 
 def test_trash_file(monkeypatch):
@@ -324,6 +465,17 @@ def test_trash_file(monkeypatch):
     assert out["trashed"] is True
     _, kwargs = svc.files().update.call_args
     assert kwargs["body"]["trashed"] is True
+    assert kwargs["supportsAllDrives"] is True
+
+
+def test_untrash_file(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.files().update().execute.return_value = {"id": "F1", "trashed": False}
+    out = api.untrash_file("F1")
+    assert out["trashed"] is False
+    _, kwargs = svc.files().update.call_args
+    assert kwargs["body"]["trashed"] is False
+    assert kwargs["supportsAllDrives"] is True
 
 
 def test_delete_file(monkeypatch):
@@ -331,7 +483,7 @@ def test_delete_file(monkeypatch):
     svc.files().delete().execute.return_value = None
     out = api.delete_file("F1")
     assert out["deleted"] is True
-    svc.files().delete.assert_called_with(fileId="F1")
+    svc.files().delete.assert_called_with(fileId="F1", supportsAllDrives=True)
 
 
 def test_batch_move_files(monkeypatch):
@@ -415,6 +567,136 @@ def test_export_formats_cover_spec_types():
     assert "pdf" in EXPORT_FORMATS["application/vnd.google-apps.presentation"]
 
 
+def test_list_comments_normalizes_and_requires_fields(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.comments().list().execute.return_value = {
+        "comments": [{
+            "id": "c1",
+            "content": "look",
+            "author": {"displayName": "Nitai"},
+            "createdTime": "2026-01-01T00:00:00Z",
+            "modifiedTime": "2026-01-01T00:00:00Z",
+            "resolved": False,
+            "anchor": json.dumps({"docsRange": {"startIndex": 1, "endIndex": 4}}),
+            "quotedFileContent": {"value": "look"},
+            "replies": [{
+                "id": "r1",
+                "content": "ok",
+                "author": {"displayName": "Ada"},
+                "action": "resolve",
+            }],
+        }],
+        "nextPageToken": "tok2",
+    }
+    out = api.list_comments("F1", page_size=10)
+    svc.comments().list.assert_called_with(
+        fileId="F1", includeDeleted=False, pageSize=10, fields=COMMENT_LIST_FIELDS,
+    )
+    comment = out["comments"][0]
+    assert comment["author"] == "Nitai"
+    assert comment["place"] == {"docsRange": {"startIndex": 1, "endIndex": 4}}
+    assert comment["quotedText"] == "look"
+    assert comment["replies"][0]["author"] == "Ada"
+    assert comment["replies"][0]["action"] == "resolve"
+    assert comment["replies"][0]["deleted"] is False
+    assert out["nextPageToken"] == "tok2"
+
+
+def test_list_comments_passes_page_token(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.comments().list().execute.return_value = {"comments": [], "nextPageToken": "c2"}
+    out = api.list_comments("F1", page_token="c1")
+    svc.comments().list.assert_called_with(
+        fileId="F1", includeDeleted=False, pageSize=20, fields=COMMENT_LIST_FIELDS,
+        pageToken="c1",
+    )
+    assert out["nextPageToken"] == "c2"
+
+
+def test_create_comment_json_anchor_and_fields(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.comments().create().execute.return_value = {"id": "c1", "content": "hi"}
+    place = {"sheetsCell": "Sheet1!B2"}
+    out = api.create_comment("F1", "hi", place)
+    svc.comments().create.assert_called_with(
+        fileId="F1",
+        body={"content": "hi", "anchor": json.dumps(place)},
+        fields=COMMENT_FIELDS,
+    )
+    assert out["id"] == "c1"
+
+
+def test_create_comment_sends_quoted_file_content(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.comments().create().execute.return_value = {"id": "c1", "content": "hi"}
+    api.create_comment("F1", "hi", quoted_text="brown")
+    svc.comments().create.assert_called_with(
+        fileId="F1",
+        body={
+            "content": "hi",
+            "quotedFileContent": {"mimeType": "text/plain", "value": "brown"},
+        },
+        fields=COMMENT_FIELDS,
+    )
+
+
+def test_create_comment_omits_quoted_file_content(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.comments().create().execute.return_value = {"id": "c1", "content": "hi"}
+    api.create_comment("F1", "hi")
+    _, kwargs = svc.comments().create.call_args
+    assert "quotedFileContent" not in kwargs["body"]
+
+
+def test_create_comment_requires_content(monkeypatch):
+    api, _ = _api_with_mock(monkeypatch)
+    with pytest.raises(ValueError, match="content is required"):
+        api.create_comment("F1", "")
+    with pytest.raises(ValueError, match="content is required"):
+        api.create_comment("F1", None)
+
+
+def test_list_comments_region_anchor_place_is_none(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    raw_anchor = '{"region":{"kind":"drive#commentRegion","line":10,"rev":"head"}}'
+    svc.comments().list().execute.return_value = {
+        "comments": [{"id": "c1", "content": "look", "anchor": raw_anchor}],
+    }
+    comment = api.list_comments("F1")["comments"][0]
+    assert comment["place"] is None
+    assert comment["anchor"] == raw_anchor
+
+
+def test_reply_to_comment_resolve_action(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.replies().create().execute.return_value = {"id": "r1", "action": "resolve"}
+    out = api.reply_to_comment("F1", "c1", action="resolve")
+    svc.replies().create.assert_called_with(
+        fileId="F1", commentId="c1", body={"action": "resolve"}, fields=REPLY_FIELDS,
+    )
+    assert out["action"] == "resolve"
+
+
+def test_reply_to_comment_requires_content_or_action(monkeypatch):
+    api, _ = _api_with_mock(monkeypatch)
+    with pytest.raises(ValueError, match="content or action"):
+        api.reply_to_comment("F1", "c1")
+
+
+def test_reply_to_comment_rejects_unknown_action(monkeypatch):
+    api, _ = _api_with_mock(monkeypatch)
+    with pytest.raises(ValueError, match="resolve"):
+        api.reply_to_comment("F1", "c1", action="close")
+
+
+def test_delete_comment(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.comments().delete().execute.return_value = None
+    out = api.delete_comment("F1", "c1")
+    svc.comments().delete.assert_called_with(fileId="F1", commentId="c1")
+    assert out == {"id": "c1", "deleted": True}
+
+
 # --- server tools (mocked _api) ---
 
 @pytest.mark.anyio
@@ -439,15 +721,73 @@ async def test_search_files_lifts_next_page_token(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_list_drives_envelope(monkeypatch):
+    fake = MagicMock(spec=DriveAPI)
+    fake.list_drives.return_value = {
+        "drives": [{"id": "SD1", "name": "Team"}], "nextPageToken": "d2",
+    }
+    monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
+    env = envelope(await server.mcp.call_tool("list_drives", {}))
+    assert env["ok"] is True and env["account"] == "d@x.com"
+    assert env["data"]["drives"][0]["id"] == "SD1"
+    assert env["next_page_token"] == "d2"
+    assert "nextPageToken" not in env["data"]
+
+
+@pytest.mark.anyio
+async def test_list_comments_envelope(monkeypatch):
+    fake = MagicMock(spec=DriveAPI)
+    fake.list_comments.return_value = {
+        "comments": [{"id": "c1"}], "nextPageToken": "n2",
+    }
+    monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
+    env = envelope(await server.mcp.call_tool("list_comments", {"file_id": "F1"}))
+    assert env["ok"] is True
+    assert env["data"]["comments"][0]["id"] == "c1"
+    assert env["next_page_token"] == "n2"
+    assert "nextPageToken" not in env["data"]
+    fake.list_comments.assert_called_once_with("F1", False, 20, None)
+
+
+@pytest.mark.anyio
+async def test_untrash_file_envelope(monkeypatch):
+    fake = MagicMock(spec=DriveAPI)
+    fake.untrash_file.return_value = {"id": "F1", "trashed": False}
+    monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
+    env = envelope(await server.mcp.call_tool("untrash_file", {"file_id": "F1"}))
+    assert env["ok"] is True
+    assert env["data"]["trashed"] is False
+    fake.untrash_file.assert_called_once_with("F1")
+
+
+@pytest.mark.anyio
+async def test_unshare_file_envelope(monkeypatch):
+    fake = MagicMock(spec=DriveAPI)
+    fake.unshare_file.return_value = {
+        "fileId": "F1", "permissionId": "p1", "removed": True,
+    }
+    monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
+    env = envelope(await server.mcp.call_tool(
+        "unshare_file", {"file_id": "F1", "email": "a@x.com"}
+    ))
+    assert env["ok"] is True
+    assert env["data"]["removed"] is True
+    fake.unshare_file.assert_called_once_with(
+        "F1", email="a@x.com", permission_id=None, anyone=False,
+    )
+
+
+@pytest.mark.anyio
 async def test_tools_registered_and_account_param():
     tools = {t.name: t for t in await server.mcp.list_tools()}
     drive_tools = [
-        "search_files", "list_files", "get_file", "download_file", "export_file",
-        "read_file_text", "list_permissions",
+        "search_files", "list_files", "list_drives", "get_file", "download_file", "export_file",
+        "read_file_text", "list_permissions", "list_comments",
         "get_changes_start_token", "list_changes",
         "upload_file", "update_file_content",
-        "create_folder", "move_file", "rename_file", "copy_file", "share_file",
-        "trash_file", "delete_file",
+        "create_folder", "move_file", "rename_file", "copy_file", "share_file", "unshare_file",
+        "trash_file", "untrash_file", "delete_file",
+        "add_comment", "reply_to_comment", "delete_comment",
         "batch_move_files", "batch_create_folders", "batch_trash_files", "batch_delete_files",
     ]
     for name in drive_tools:
@@ -468,6 +808,68 @@ async def test_batch_move_files_envelope(monkeypatch):
     ))
     assert env["ok"] is True
     assert env["data"]["total"] == 2
+
+
+@pytest.mark.anyio
+async def test_batch_move_files_envelope_all_failed(monkeypatch):
+    fake = MagicMock(spec=DriveAPI)
+    fake.batch_move_files.return_value = {
+        "total": 2,
+        "succeeded": 0,
+        "failed": 2,
+        "results": [
+            {"ok": False, "file_id": "A", "error": "not found"},
+            {"ok": False, "file_id": "B", "error": "not found"},
+        ],
+    }
+    monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
+    env = envelope(await server.mcp.call_tool(
+        "batch_move_files", {"file_ids": ["A", "B"], "new_parent_id": "DEST"}
+    ))
+    assert env["ok"] is False
+    assert env["data"]["failed"] == 2
+    assert env["data"]["results"]
+
+
+@pytest.mark.anyio
+async def test_batch_move_files_envelope_partial_success(monkeypatch):
+    fake = MagicMock(spec=DriveAPI)
+    fake.batch_move_files.return_value = {
+        "total": 2,
+        "succeeded": 1,
+        "failed": 1,
+        "results": [
+            {"ok": True, "file_id": "A"},
+            {"ok": False, "file_id": "B", "error": "not found"},
+        ],
+    }
+    monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
+    env = envelope(await server.mcp.call_tool(
+        "batch_move_files", {"file_ids": ["A", "B"], "new_parent_id": "DEST"}
+    ))
+    assert env["ok"] is True
+    assert env["data"]["failed"] == 1
+
+
+@pytest.mark.anyio
+async def test_batch_delete_files_envelope_all_failed(monkeypatch):
+    fake = MagicMock(spec=DriveAPI)
+    fake.batch_delete_files.return_value = {
+        "total": 2,
+        "succeeded": 0,
+        "failed": 2,
+        "results": [
+            {"ok": False, "file_id": "A", "error": "not found"},
+            {"ok": False, "file_id": "B", "error": "not found"},
+        ],
+    }
+    monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
+    env = envelope(await server.mcp.call_tool(
+        "batch_delete_files", {"file_ids": ["A", "B"]}
+    ))
+    assert env["ok"] is False
+    assert env["data"]["failed"] == 2
+    assert env["data"]["results"]
 
 
 @pytest.mark.anyio

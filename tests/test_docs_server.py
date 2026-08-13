@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -34,6 +35,17 @@ def _api_with_mock(monkeypatch):
     svc = MagicMock()
     monkeypatch.setattr("google_auth_core.get_service", lambda *a, **k: svc)
     return DocsAPI("x@x.com"), svc
+
+
+def _api_with_drive_mock(monkeypatch):
+    docs_svc = MagicMock()
+    drive_svc = MagicMock()
+
+    def fake(name, version="v1", account=None):
+        return drive_svc if name == "drive" else docs_svc
+
+    monkeypatch.setattr("google_auth_core.get_service", fake)
+    return DocsAPI("x@x.com"), drive_svc
 
 
 def test_create_document(monkeypatch):
@@ -367,12 +379,26 @@ def test_insert_sheets_chart_pipeline(monkeypatch):
     drive.files().create().execute.return_value = {"id": "FILE1"}
     drive.permissions().create().execute.return_value = {"id": "perm"}
     svc.documents().batchUpdate().execute.return_value = {"ok": True}
-    out = api.insert_sheets_chart("D1", "SHEET1", 123, index=5)
+    out = api.insert_sheets_chart("D1", "SHEET1", 123, index=5, make_public=True)
     assert "drive.google.com" in out["imageUri"]
+    assert out["fileId"] == "FILE1"
     _, kwargs = svc.documents().batchUpdate.call_args
     req = kwargs["body"]["requests"][0]["insertInlineImage"]
     assert req["location"]["index"] == 5
     assert "FILE1" in req["uri"]
+
+
+def test_insert_sheets_chart_default_does_not_upload(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    monkeypatch.setattr(
+        "google_workspace_mcp.sheets.sheets_api.SheetsAPI.fetch_chart_image_bytes",
+        lambda self, sid, cid: b"PNG",
+    )
+    drive = MagicMock()
+    monkeypatch.setattr("google_auth_core.get_service", lambda name, ver, account=None: drive if name == "drive" else svc)
+    with pytest.raises(ValueError, match="make_public=True"):
+        api.insert_sheets_chart("D1", "SHEET1", 123, index=5)
+    drive.files().create.assert_not_called()
 
 
 def test_get_chart_image_url():
@@ -398,6 +424,7 @@ def test_create_document_from_markdown(monkeypatch):
         "parents": ["F1"],
     }
     assert kwargs["media_body"].mimetype() == "text/markdown"
+    assert kwargs["supportsAllDrives"] is True
 
 
 def test_create_document_from_markdown_no_folder(monkeypatch):
@@ -416,6 +443,7 @@ def test_replace_document_with_markdown(monkeypatch):
     _, kwargs = svc.files().update.call_args
     assert kwargs["fileId"] == "D1"
     assert kwargs["media_body"].mimetype() == "text/markdown"
+    assert kwargs["supportsAllDrives"] is True
 
 
 def test_read_document_as_markdown(monkeypatch):
@@ -493,6 +521,7 @@ async def test_tools_registered_and_account_param():
         "insert_inline_image", "insert_chart_image", "insert_sheets_chart", "insert_table", "insert_page_break",
         "insert_bullets", "insert_numbered_list", "populate_table", "merge_table_cells", "format_table_cells",
         "insert_page_number", "batch_update", "remove_bullets", "delete_range",
+        "list_comments", "add_comment", "reply_to_comment", "delete_comment",
     ]
     for name in docs_tools:
         assert name in tools, f"missing tool {name}"
@@ -559,3 +588,255 @@ async def test_read_document_as_markdown_tool(patched_docs_server):
     raw = await server.mcp.call_tool("read_document_as_markdown", {"document_id": "D1"})
     assert envelope(raw)["data"]["markdown"] == "# Hi"
     patched_docs_server.read_document_as_markdown.assert_called_once_with("D1")
+
+
+def _paragraph_doc(text, start_index=1):
+    end_index = start_index + len(text)
+    return {
+        "body": {
+            "content": [{
+                "startIndex": start_index,
+                "endIndex": end_index,
+                "paragraph": {
+                    "elements": [{
+                        "startIndex": start_index,
+                        "endIndex": end_index,
+                        "textRun": {"content": text},
+                    }],
+                },
+            }],
+        },
+    }
+
+
+def test_add_comment_encodes_docs_range(monkeypatch):
+    api, drive = _api_with_drive_mock(monkeypatch)
+    drive.comments().create().execute.return_value = {
+        "id": "c1", "content": "check this", "author": {"displayName": "N"},
+        "anchor": json.dumps({"docsRange": {"startIndex": 10, "endIndex": 25}}),
+    }
+    out = api.add_comment("D1", "check this", 10, 25)
+    _, kwargs = drive.comments().create.call_args
+    assert kwargs["fields"]
+    assert json.loads(kwargs["body"]["anchor"]) == {"docsRange": {"startIndex": 10, "endIndex": 25}}
+    assert out["place"] == {"docsRange": {"startIndex": 10, "endIndex": 25}}
+
+
+def test_add_comment_quote_brown_encodes_range(monkeypatch):
+    api, drive = _api_with_drive_mock(monkeypatch)
+    api.get_document = lambda document_id: _paragraph_doc("The quick brown fox jumps.\n")
+    drive.comments().create().execute.return_value = {
+        "id": "c1", "content": "note",
+        "anchor": json.dumps({"docsRange": {"startIndex": 11, "endIndex": 16}}),
+        "quotedFileContent": {"mimeType": "text/plain", "value": "brown"},
+    }
+    out = api.add_comment("D1", "note", quote="brown")
+    _, kwargs = drive.comments().create.call_args
+    body = kwargs["body"]
+    assert json.loads(body["anchor"]) == {"docsRange": {"startIndex": 11, "endIndex": 16}}
+    assert body["quotedFileContent"] == {"mimeType": "text/plain", "value": "brown"}
+    assert out["place"] == {"docsRange": {"startIndex": 11, "endIndex": 16}}
+    assert out["quotedText"] == "brown"
+
+
+def test_add_comment_quote_after_emoji_uses_utf16_indexes(monkeypatch):
+    api, drive = _api_with_drive_mock(monkeypatch)
+    api.get_document = lambda document_id: _paragraph_doc("Hi 👍 brown fox\n")
+    drive.comments().create().execute.return_value = {
+        "id": "c1", "content": "note",
+        "anchor": json.dumps({"docsRange": {"startIndex": 7, "endIndex": 12}}),
+        "quotedFileContent": {"mimeType": "text/plain", "value": "brown"},
+    }
+    out = api.add_comment("D1", "note", quote="brown")
+    _, kwargs = drive.comments().create.call_args
+    body = kwargs["body"]
+    assert json.loads(body["anchor"]) == {"docsRange": {"startIndex": 7, "endIndex": 12}}
+    assert body["quotedFileContent"]["value"] == "brown"
+    assert out["place"] == {"docsRange": {"startIndex": 7, "endIndex": 12}}
+    assert out["quotedText"] == "brown"
+
+
+def test_add_comment_quote_emoji_range(monkeypatch):
+    api, drive = _api_with_drive_mock(monkeypatch)
+    api.get_document = lambda document_id: _paragraph_doc("Hi 👍 brown fox\n")
+    drive.comments().create().execute.return_value = {
+        "id": "c1", "content": "note",
+        "anchor": json.dumps({"docsRange": {"startIndex": 4, "endIndex": 6}}),
+        "quotedFileContent": {"mimeType": "text/plain", "value": "👍"},
+    }
+    api.add_comment("D1", "note", quote="👍")
+    _, kwargs = drive.comments().create.call_args
+    body = kwargs["body"]
+    assert json.loads(body["anchor"]) == {"docsRange": {"startIndex": 4, "endIndex": 6}}
+    assert body["quotedFileContent"]["value"] == "👍"
+
+
+def test_add_comment_quote_occurrence_2(monkeypatch):
+    api, drive = _api_with_drive_mock(monkeypatch)
+    api.get_document = lambda document_id: _paragraph_doc("The quick brown fox and brown dog.\n")
+    drive.comments().create().execute.return_value = {
+        "id": "c1", "content": "note",
+        "anchor": json.dumps({"docsRange": {"startIndex": 25, "endIndex": 30}}),
+        "quotedFileContent": {"mimeType": "text/plain", "value": "brown"},
+    }
+    api.add_comment("D1", "note", quote="brown", occurrence=2)
+    _, kwargs = drive.comments().create.call_args
+    body = kwargs["body"]
+    assert json.loads(body["anchor"]) == {"docsRange": {"startIndex": 25, "endIndex": 30}}
+    assert body["quotedFileContent"]["value"] == "brown"
+
+
+def test_add_comment_missing_quote_raises(monkeypatch):
+    api, _ = _api_with_drive_mock(monkeypatch)
+    api.get_document = lambda document_id: _paragraph_doc("The quick fox jumps.\n")
+    with pytest.raises(ValueError, match="brown"):
+        api.add_comment("D1", "note", quote="brown")
+
+
+def test_add_comment_occurrence_too_small_raises(monkeypatch):
+    api, _ = _api_with_drive_mock(monkeypatch)
+    with pytest.raises(ValueError, match="occurrence"):
+        api.add_comment("D1", "note", quote="brown", occurrence=0)
+
+
+def test_add_comment_occurrence_out_of_range_raises(monkeypatch):
+    api, _ = _api_with_drive_mock(monkeypatch)
+    api.get_document = lambda document_id: _paragraph_doc("The quick brown fox jumps.\n")
+    with pytest.raises(ValueError, match="occurrence"):
+        api.add_comment("D1", "note", quote="brown", occurrence=2)
+
+
+def test_add_comment_start_end_extracts_quoted_text(monkeypatch):
+    api, drive = _api_with_drive_mock(monkeypatch)
+    api.get_document = lambda document_id: _paragraph_doc("The quick brown fox jumps.\n")
+    drive.comments().create().execute.return_value = {
+        "id": "c1", "content": "note",
+        "anchor": json.dumps({"docsRange": {"startIndex": 11, "endIndex": 16}}),
+        "quotedFileContent": {"mimeType": "text/plain", "value": "brown"},
+    }
+    api.add_comment("D1", "note", 11, 16)
+    _, kwargs = drive.comments().create.call_args
+    body = kwargs["body"]
+    assert json.loads(body["anchor"]) == {"docsRange": {"startIndex": 11, "endIndex": 16}}
+    assert body["quotedFileContent"] == {"mimeType": "text/plain", "value": "brown"}
+
+
+def test_add_comment_omits_anchor_without_indices(monkeypatch):
+    api, drive = _api_with_drive_mock(monkeypatch)
+    drive.comments().create().execute.return_value = {"id": "c1", "content": "note"}
+    api.add_comment("D1", "note")
+    _, kwargs = drive.comments().create.call_args
+    assert "anchor" not in kwargs["body"]
+
+
+def test_add_comment_requires_both_indices(monkeypatch):
+    api, _ = _api_with_mock(monkeypatch)
+    with pytest.raises(ValueError, match="both be set"):
+        api.add_comment("D1", "hi", start_index=1)
+
+
+def test_add_comment_rejects_inverted_range(monkeypatch):
+    api, _ = _api_with_mock(monkeypatch)
+    with pytest.raises(ValueError, match="less than"):
+        api.add_comment("D1", "hi", 10, 10)
+
+
+def test_list_comments_delegates_to_drive(monkeypatch):
+    api, drive = _api_with_drive_mock(monkeypatch)
+    drive.comments().list().execute.return_value = {"comments": []}
+    out = api.list_comments("D1")
+    assert out["comments"] == []
+    drive.comments().list.assert_called()
+
+
+@pytest.mark.anyio
+async def test_list_comments_envelope(patched_docs_server):
+    patched_docs_server.list_comments.return_value = {
+        "comments": [{"id": "c1"}], "nextPageToken": "n2",
+    }
+    env = envelope(await server.mcp.call_tool("list_comments", {"document_id": "D1"}))
+    assert env["ok"] is True
+    assert env["data"]["comments"][0]["id"] == "c1"
+    assert env["next_page_token"] == "n2"
+    assert "nextPageToken" not in env["data"]
+
+
+@pytest.mark.anyio
+async def test_list_comments_passes_page_token(patched_docs_server):
+    patched_docs_server.list_comments.return_value = {"comments": []}
+    await server.mcp.call_tool("list_comments", {"document_id": "D1", "page_token": "n1"})
+    patched_docs_server.list_comments.assert_called_once_with("D1", False, 20, "n1")
+
+
+@pytest.mark.anyio
+async def test_add_comment_tool(patched_docs_server):
+    patched_docs_server.add_comment.return_value = {"id": "c1", "content": "note"}
+    env = envelope(await server.mcp.call_tool("add_comment", {
+        "document_id": "D1", "content": "note", "start_index": 10, "end_index": 25,
+    }))
+    assert env["ok"] is True
+    assert env["account"] == "test@x.com"
+    assert env["data"]["id"] == "c1"
+    patched_docs_server.add_comment.assert_called_once_with("D1", "note", 10, 25, None, 1)
+
+
+@pytest.mark.anyio
+async def test_add_comment_tool_passes_quote(patched_docs_server):
+    patched_docs_server.add_comment.return_value = {"id": "c1", "content": "note"}
+    env = envelope(await server.mcp.call_tool("add_comment", {
+        "document_id": "D1", "content": "note", "quote": "brown",
+    }))
+    assert env["ok"] is True
+    patched_docs_server.add_comment.assert_called_once_with("D1", "note", None, None, "brown", 1)
+
+
+@pytest.mark.anyio
+async def test_reply_to_comment_tool_resolve(patched_docs_server):
+    patched_docs_server.reply_to_comment.return_value = {"id": "r1", "action": "resolve"}
+    env = envelope(await server.mcp.call_tool("reply_to_comment", {
+        "document_id": "D1", "comment_id": "c1", "action": "resolve",
+    }))
+    assert env["ok"] is True
+    assert env["account"] == "test@x.com"
+    assert env["data"]["action"] == "resolve"
+    patched_docs_server.reply_to_comment.assert_called_once_with("D1", "c1", None, "resolve")
+
+
+@pytest.mark.anyio
+async def test_delete_comment_tool_marked_destructive():
+    tools = {t.name: t for t in await server.mcp.list_tools()}
+    desc = (tools["delete_comment"].description or "").lower()
+    assert "destructive" in desc
+
+
+def test_readonly_hides_mutating_tools():
+    import subprocess
+    code = """
+import os
+os.environ["GOOGLE_MCP_READONLY"] = "1"
+
+import importlib
+import google_workspace_mcp.core.runtime as rt
+importlib.reload(rt)
+
+import google_workspace_mcp.docs.server as srv
+importlib.reload(srv)
+
+import asyncio
+async def main():
+    tools = await srv.mcp.list_tools()
+    names = [t.name for t in tools]
+    assert "add_comment" not in names, f"add_comment should be hidden; got {names}"
+    assert "reply_to_comment" not in names, f"reply_to_comment should be hidden; got {names}"
+    assert "delete_comment" not in names, f"delete_comment should be hidden; got {names}"
+    assert "list_comments" in names, f"list_comments should be present; got {names}"
+    print("OK")
+
+asyncio.run(main())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, f"subprocess failed:\n{result.stdout}\n{result.stderr}"
+    assert "OK" in result.stdout

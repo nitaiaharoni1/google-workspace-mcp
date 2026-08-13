@@ -7,6 +7,7 @@ from .drive_api import DriveAPI
 mcp = build_server(
     "gdrive-mcp",
     "Google Drive: search, read, upload, organize, and share files for one or more Google accounts.",
+    service_name="drive",
 )
 
 
@@ -23,19 +24,21 @@ def search_files(
     mime_type: str | None = None,
     parent_id: str | None = None,
     full_text: str | None = None,
+    drive_id: str | None = None,
     page_size: int = 25,
     page_token: str | None = None,
 ) -> dict:
     """Search Drive by name, mimeType, parent folder, full-text, and/or a raw q= query.
 
+    Set drive_id to search one shared drive. Omit to search the user corpus (My Drive plus shared-drive files in that corpus).
     Pass page_token from a previous response's next_page_token to continue.
     """
     api, resolved = _api(account)
     raw = run_tool(
         lambda: api.search_files(
             query=query, name=name, mime_type=mime_type,
-            parent_id=parent_id, full_text=full_text, page_size=page_size,
-            page_token=page_token,
+            parent_id=parent_id, full_text=full_text, drive_id=drive_id,
+            page_size=page_size, page_token=page_token,
         )
     )
     next_token = raw.pop("nextPageToken", None)
@@ -46,15 +49,37 @@ def search_files(
 def list_files(
     account: str | None = None,
     folder_id: str | None = None,
+    drive_id: str | None = None,
     page_size: int = 25,
     page_token: str | None = None,
 ) -> dict:
     """List recent files, optionally restricted to a folder's children.
 
+    Set drive_id to list one shared drive. Omit to list the user corpus (My Drive plus shared-drive files in that corpus).
     Pass page_token from a previous response's next_page_token to continue.
     """
     api, resolved = _api(account)
-    raw = run_tool(lambda: api.list_files(folder_id=folder_id, page_size=page_size, page_token=page_token))
+    raw = run_tool(
+        lambda: api.list_files(
+            folder_id=folder_id, drive_id=drive_id, page_size=page_size, page_token=page_token,
+        )
+    )
+    next_token = raw.pop("nextPageToken", None)
+    return ok(resolved, raw, next_page_token=next_token)
+
+
+@register(mcp)
+def list_drives(
+    account: str | None = None,
+    page_size: int = 25,
+    page_token: str | None = None,
+) -> dict:
+    """List shared drives the account can access.
+
+    Pass page_token from a previous response's next_page_token to continue.
+    """
+    api, resolved = _api(account)
+    raw = run_tool(lambda: api.list_drives(page_size=page_size, page_token=page_token))
     next_token = raw.pop("nextPageToken", None)
     return ok(resolved, raw, next_page_token=next_token)
 
@@ -120,6 +145,26 @@ def list_permissions(account: str | None = None, file_id: str = "") -> dict:
     api, resolved = _api(account)
     data = run_tool(lambda: api.list_permissions(file_id))
     return ok(resolved, data)
+
+
+@register(mcp)
+def list_comments(
+    account: str | None = None,
+    file_id: str = "",
+    include_deleted: bool = False,
+    page_size: int = 20,
+    page_token: str | None = None,
+) -> dict:
+    """List comment threads on a file (Drive discussions, not in-editor highlights).
+
+    Pass page_token from a previous response's next_page_token to continue.
+    """
+    api, resolved = _api(account)
+    raw = run_tool(
+        lambda: api.list_comments(file_id, include_deleted, page_size, page_token)
+    )
+    next_token = raw.pop("nextPageToken", None)
+    return ok(resolved, raw, next_page_token=next_token)
 
 
 @register(mcp)
@@ -260,10 +305,36 @@ def share_file(
 
 
 @register(mcp, mutating=True)
+def unshare_file(
+    account: str | None = None,
+    file_id: str = "",
+    email: str | None = None,
+    permission_id: str | None = None,
+    anyone: bool = False,
+) -> dict:
+    """Remove a permission from a file by email, permission_id, or the anyone link."""
+    api, resolved = _api(account)
+    data = run_tool(
+        lambda: api.unshare_file(
+            file_id, email=email, permission_id=permission_id, anyone=anyone,
+        )
+    )
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
 def trash_file(account: str | None = None, file_id: str = "") -> dict:
     """Move a file to trash (reversible from the Drive UI)."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.trash_file(file_id))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def untrash_file(account: str | None = None, file_id: str = "") -> dict:
+    """Restore a file from trash."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.untrash_file(file_id))
     return ok(resolved, data)
 
 
@@ -272,6 +343,41 @@ def delete_file(account: str | None = None, file_id: str = "") -> dict:
     """Permanently delete a file (cannot be undone)."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.delete_file(file_id))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def add_comment(
+    account: str | None = None,
+    file_id: str = "",
+    content: str = "",
+    quoted_text: str | None = None,
+) -> dict:
+    """Add a comment on a file. Google will not highlight in the editor; optional quoted_text is remembered as the quoted snippet."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.create_comment(file_id, content, quoted_text=quoted_text))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def reply_to_comment(
+    account: str | None = None,
+    file_id: str = "",
+    comment_id: str = "",
+    content: str | None = None,
+    action: str | None = None,
+) -> dict:
+    """Reply to a Drive discussion, or pass action='resolve' / 'reopen'."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.reply_to_comment(file_id, comment_id, content, action))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True, destructive=True)
+def delete_comment(account: str | None = None, file_id: str = "", comment_id: str = "") -> dict:
+    """Delete a Drive discussion thread."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.delete_comment(file_id, comment_id))
     return ok(resolved, data)
 
 
@@ -286,6 +392,12 @@ def _coalesce_move_items(items, file_ids, new_parent_id):
     )
 
 
+def _batch_envelope(resolved, data):
+    if data.get("total", 0) > 0 and data.get("succeeded", 0) == 0:
+        return {"ok": False, "account": resolved, "data": data}
+    return ok(resolved, data)
+
+
 @register(mcp, mutating=True)
 def batch_move_files(
     account: str | None = None,
@@ -298,12 +410,13 @@ def batch_move_files(
     Pass items=[{file_id, new_parent_id}, ...] for per-file destinations, or
     file_ids=[...] with a shared new_parent_id. Per-file errors are reported
     individually without aborting the rest; returns {total, succeeded, failed, results}.
+    If every item fails, ok is false; per-item errors still live in data.results.
     """
     api, resolved = _api(account)
     data = run_tool(
         lambda: api.batch_move_files(_coalesce_move_items(items, file_ids, new_parent_id))
     )
-    return ok(resolved, data)
+    return _batch_envelope(resolved, data)
 
 
 @register(mcp, mutating=True)
@@ -312,10 +425,11 @@ def batch_create_folders(account: str | None = None, items: list | None = None) 
 
     items=[{name, parent_id?}, ...]. Returns each created folder's id so you can
     follow up with batch_move_files. Per-folder errors are reported individually.
+    If every item fails, ok is false; per-item errors still live in data.results.
     """
     api, resolved = _api(account)
     data = run_tool(lambda: api.batch_create_folders(items or []))
-    return ok(resolved, data)
+    return _batch_envelope(resolved, data)
 
 
 @register(mcp, mutating=True)
@@ -323,10 +437,11 @@ def batch_trash_files(account: str | None = None, file_ids: list | None = None) 
     """Trash many files in one call (reversible). file_ids=[...].
 
     Per-file errors are reported individually; returns {total, succeeded, failed, results}.
+    If every item fails, ok is false; per-item errors still live in data.results.
     """
     api, resolved = _api(account)
     data = run_tool(lambda: api.batch_trash_files(file_ids or []))
-    return ok(resolved, data)
+    return _batch_envelope(resolved, data)
 
 
 @register(mcp, mutating=True, destructive=True)
@@ -334,10 +449,11 @@ def batch_delete_files(account: str | None = None, file_ids: list | None = None)
     """Permanently delete many files in one call. file_ids=[...].
 
     Per-file errors are reported individually; returns {total, succeeded, failed, results}.
+    If every item fails, ok is false; per-item errors still live in data.results.
     """
     api, resolved = _api(account)
     data = run_tool(lambda: api.batch_delete_files(file_ids or []))
-    return ok(resolved, data)
+    return _batch_envelope(resolved, data)
 
 
 def main():

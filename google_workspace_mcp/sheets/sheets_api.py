@@ -6,10 +6,14 @@ import re
 import google_auth_core as core
 from google.auth.transport.requests import Request as GoogleAuthRequest
 
+from ..drive.drive_api import DriveAPI
+
 # Width heuristic for the default Sheets font (Arial 10):
 # ~7 px per character plus ~14 px of cell padding/border.
 CHAR_PX = 7
 CELL_PADDING_PX = 14
+_CHART_TYPES = frozenset({"COLUMN", "BAR", "LINE", "AREA", "PIE"})
+_STACKED_CHART_TYPES = frozenset({"COLUMN", "BAR", "AREA"})
 
 
 def _col_to_index(letters):
@@ -138,6 +142,14 @@ class SheetsAPI:
     def _batch(self, spreadsheet_id, requests):
         if not requests:
             return {"replies": []}
+        return self.service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id, body={"requests": requests}
+        ).execute()
+
+    def batch_update(self, spreadsheet_id, requests):
+        """Pass raw batchUpdate request dicts through to the Sheets API."""
+        if not isinstance(requests, list) or not requests:
+            raise ValueError("requests must be a non-empty list")
         return self.service.spreadsheets().batchUpdate(
             spreadsheetId=spreadsheet_id, body={"requests": requests}
         ).execute()
@@ -756,7 +768,43 @@ class SheetsAPI:
     def _assert_single_cell(self, cell):
         name, sc, sr, ec, er = self._parse_a1_local(cell)
         if not (sc and sr and sc == ec and sr == er):
-            raise ValueError(f"edit_cell expects a single cell like 'Sheet1!B2', got {cell!r}")
+            raise ValueError(f"expected a single cell like 'Sheet1!B2', got {cell!r}")
+
+    def _drive_comments(self):
+        inst = getattr(self, "_drive_comments_api", None)
+        if inst is None:
+            inst = DriveAPI(self.account)
+            self._drive_comments_api = inst
+        return inst
+
+    def list_comments(self, spreadsheet_id, include_deleted=False, page_size=20, page_token=None):
+        return self._drive_comments().list_comments(
+            spreadsheet_id, include_deleted, page_size, page_token,
+        )
+
+    def add_comment(self, spreadsheet_id, content, cell=None):
+        anchor = None
+        quoted_text = None
+        if cell:
+            self._assert_single_cell(cell)
+            anchor = {"sheetsCell": cell}
+            resp = self.read_range(spreadsheet_id, cell)
+            values = resp.get("values") or []
+            raw = values[0][0] if (values and values[0]) else ""
+            text = "" if raw is None else str(raw)
+            if text:
+                quoted_text = text
+        return self._drive_comments().create_comment(
+            spreadsheet_id, content, anchor, quoted_text=quoted_text,
+        )
+
+    def reply_to_comment(self, spreadsheet_id, comment_id, content=None, action=None):
+        return self._drive_comments().reply_to_comment(
+            spreadsheet_id, comment_id, content, action,
+        )
+
+    def delete_comment(self, spreadsheet_id, comment_id):
+        return self._drive_comments().delete_comment(spreadsheet_id, comment_id)
 
     def edit_cell(self, spreadsheet_id, cell, operation, find=None, replacement=None,
                   position=None, length=None, text=None, count=None):
@@ -896,6 +944,57 @@ class SheetsAPI:
             return {"updatedCells": 0}
         target = target_range or self._anchor(sheet_name, start_col, start_row)
         return self.update_range(spreadsheet_id, target, out, "USER_ENTERED")
+
+    def add_chart(self, spreadsheet_id, range, chart_type="COLUMN", title=None, stacked=False):
+        chart_type = (chart_type or "COLUMN").upper()
+        if chart_type not in _CHART_TYPES:
+            raise ValueError(f"chart_type must be one of {sorted(_CHART_TYPES)}")
+        grid = self._a1_to_grid_range(spreadsheet_id, range)
+        start_col = grid["startColumnIndex"]
+        end_col = grid["endColumnIndex"]
+        domain_grid = {**grid, "startColumnIndex": start_col, "endColumnIndex": start_col + 1}
+        series_grids = []
+        col = start_col + 1
+        while col < end_col:
+            series_grids.append({**grid, "startColumnIndex": col, "endColumnIndex": col + 1})
+            col += 1
+        if not series_grids:
+            series_grids = [domain_grid]
+        basic_chart = {
+            "chartType": chart_type,
+            "legendPosition": "RIGHT_LEGEND" if chart_type == "PIE" else "BOTTOM_LEGEND",
+            "headerCount": 1,
+            "domains": [{"domain": {"sourceRange": {"sources": [domain_grid]}}}],
+            "series": [
+                {"series": {"sourceRange": {"sources": [series_grid]}}}
+                for series_grid in series_grids
+            ],
+        }
+        if stacked and chart_type in _STACKED_CHART_TYPES:
+            basic_chart["stackedType"] = "STACKED"
+        if chart_type == "PIE":
+            spec = {"pieChart": {
+                "legendPosition": "RIGHT_LEGEND",
+                "domain": {"sourceRange": {"sources": [domain_grid]}},
+                "series": {"sourceRange": {"sources": [series_grids[0]]}},
+            }}
+        else:
+            spec = {"basicChart": basic_chart}
+        if title:
+            spec["title"] = title
+        result = self._batch(spreadsheet_id, [{"addChart": {"chart": {
+            "spec": spec,
+            "position": {"overlayPosition": {"anchorCell": {
+                "sheetId": grid["sheetId"],
+                "rowIndex": grid.get("startRowIndex", 0),
+                "columnIndex": end_col,
+            }}},
+        }}}])
+        replies = result.get("replies") or []
+        chart_id = None
+        if replies:
+            chart_id = replies[0].get("addChart", {}).get("chart", {}).get("chartId")
+        return {"chartId": chart_id, "replies": replies}
 
     # --- chart export (for Docs insert_sheets_chart) ---
 

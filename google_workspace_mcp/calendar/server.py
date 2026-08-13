@@ -7,6 +7,7 @@ from .changes_api import CalendarChangesAPI
 mcp = build_server(
     "gcal-mcp",
     "Google Calendar: list/search events, create/update/delete events, manage calendars, and check availability for one or more accounts.",
+    service_name="calendar",
 )
 
 
@@ -255,6 +256,62 @@ def create_event(
             timezone=timezone,
             color_id=color_id,
             add_meet=add_meet,
+        )
+    )
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def create_out_of_office(
+    account: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    timezone: str = "UTC",
+    calendar_id: str = "primary",
+    summary: str | None = None,
+    decline_message: str | None = None,
+    auto_decline: bool = True,
+) -> dict:
+    """Create an out-of-office block on the primary calendar. Declines conflicting invites when auto_decline=True (default)."""
+    api, resolved = _api(account)
+    data = run_tool(
+        lambda: api.create_status_event(
+            event_type="outOfOffice",
+            start_time=start_time,
+            end_time=end_time,
+            timezone=timezone,
+            calendar_id=calendar_id,
+            summary=summary,
+            decline_message=decline_message,
+            auto_decline=auto_decline,
+        )
+    )
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def create_focus_time(
+    account: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    timezone: str = "UTC",
+    calendar_id: str = "primary",
+    summary: str | None = None,
+    decline_message: str | None = None,
+    auto_decline: bool = True,
+) -> dict:
+    """Create a focus-time block on the primary calendar. Declines conflicting invites when auto_decline=True (default)."""
+    api, resolved = _api(account)
+    data = run_tool(
+        lambda: api.create_status_event(
+            event_type="focusTime",
+            start_time=start_time,
+            end_time=end_time,
+            timezone=timezone,
+            calendar_id=calendar_id,
+            summary=summary,
+            decline_message=decline_message,
+            auto_decline=auto_decline,
         )
     )
     return ok(resolved, data)

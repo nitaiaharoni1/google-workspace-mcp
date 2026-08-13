@@ -8,6 +8,7 @@
 """
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -17,6 +18,7 @@ import google_auth_core as core
 import pytest
 
 from google_workspace_mcp.core import runtime
+from google_workspace_mcp.core.server import build_server
 
 # --- multi-account isolation -------------------------------------------------
 
@@ -248,4 +250,48 @@ async def test_no_output_schema_regression():
         tools = await mod.mcp.list_tools()
         for tool in tools:
             assert tool.outputSchema is None, tool.name
+
+
+def _parse_tool(result) -> dict:
+    if isinstance(result, tuple):
+        content, structured = result
+        if structured:
+            return structured
+        result = content
+    assert result, "empty tool result"
+    return json.loads(result[0].text)
+
+
+@pytest.mark.anyio
+async def test_auth_status_resolves_alias(store_env, write_token):
+    write_token(store_env, "real@x.com")
+    core.set_account_alias("work", "real@x.com")
+    mcp = build_server("test-mcp")
+    data = _parse_tool(await mcp.call_tool("auth_status", {"account": "work"}))
+    assert data["ok"] is True
+    assert "real@x.com" in data["data"]
+    assert "work" not in data["data"]
+
+
+@pytest.mark.anyio
+async def test_common_tools_honor_service_name(store_env, write_token, monkeypatch):
+    write_token(store_env, "gmail-env@x.com")
+    write_token(store_env, "store-default@x.com")
+    monkeypatch.setenv("GMAIL_ACCOUNT", "gmail-env@x.com")
+    mcp = build_server("test-mcp", service_name="gmail")
+    listed = _parse_tool(await mcp.call_tool("list_accounts", {}))
+    assert listed["data"]["default"] == "gmail-env@x.com"
+    me = _parse_tool(await mcp.call_tool("whoami", {}))
+    assert me["account"] == "gmail-env@x.com"
+
+
+@pytest.mark.anyio
+async def test_whoami_error_returns_resolved_account(store_env, write_token):
+    path = write_token(store_env, "ghost@x.com")
+    core.set_account_alias("work", "ghost@x.com")
+    path.unlink()
+    mcp = build_server("test-mcp")
+    data = _parse_tool(await mcp.call_tool("whoami", {"account": "work"}))
+    assert data["ok"] is False
+    assert data["account"] == "ghost@x.com"
 

@@ -62,6 +62,43 @@ class FakeAPI:
         self._record("get_message", message_id=message_id, format=format)
         return {"id": message_id, "snippet": "Hi"}
 
+    def get_message_text(self, message_id):
+        self._record("get_message_text", message_id=message_id)
+        return {
+            "id": message_id,
+            "threadId": "t1",
+            "labelIds": ["INBOX"],
+            "subject": "Hi",
+            "from": "a@x.com",
+            "to": "b@x.com",
+            "cc": "",
+            "date": "Thu, 13 Aug 2026",
+            "snippet": "hello",
+            "body_text": "hello",
+            "attachments": [],
+        }
+
+    def get_thread(self, thread_id, format="full"):
+        self._record("get_thread", thread_id=thread_id, format=format)
+        return {"id": thread_id, "messages": [{"id": "abc"}]}
+
+    def get_thread_text(self, thread_id):
+        self._record("get_thread_text", thread_id=thread_id)
+        return {
+            "id": thread_id,
+            "historyId": "9",
+            "messages": [
+                {
+                    "id": "abc",
+                    "threadId": thread_id,
+                    "subject": "Hi",
+                    "from": "a@x.com",
+                    "body_text": "hello",
+                    "attachments": [],
+                }
+            ],
+        }
+
     def list_threads(self, max_results=10, query=None):
         self._record("list_threads", max_results=max_results, query=query)
         return [{"id": "thread1"}]
@@ -125,12 +162,47 @@ class FakeAPI:
         self._record("send_message", to=to, subject=subject, body=body, cc=cc, html=html)
         return {"id": "sent1", "threadId": "t1"}
 
-    def reply_to_message(self, message_id, body, reply_all=False, additional_cc=None):
-        self._record("reply_to_message", message_id=message_id, body=body, reply_all=reply_all)
+    def reply_to_message(self, message_id, body, reply_all=False, additional_cc=None, attachments=None):
+        self._record(
+            "reply_to_message",
+            message_id=message_id,
+            body=body,
+            reply_all=reply_all,
+            additional_cc=additional_cc,
+            attachments=attachments,
+        )
         return {"id": "sent2"}
 
-    def forward_message(self, message_id, to, body=None):
-        self._record("forward_message", message_id=message_id, to=to, body=body)
+    def draft_reply(self, message_id, body, reply_all=False, additional_cc=None, attachments=None):
+        self._record(
+            "draft_reply",
+            message_id=message_id,
+            body=body,
+            reply_all=reply_all,
+            additional_cc=additional_cc,
+            attachments=attachments,
+        )
+        return {"id": "draft_reply1"}
+
+    def send_draft(self, draft_id):
+        self._record("send_draft", draft_id=draft_id)
+        return {"id": "sent_draft1"}
+
+    def delete_draft(self, draft_id):
+        self._record("delete_draft", draft_id=draft_id)
+        return None
+
+    def download_attachment(self, message_id, output_dir=None, attachment_id=None):
+        self._record(
+            "download_attachment",
+            message_id=message_id,
+            output_dir=output_dir,
+            attachment_id=attachment_id,
+        )
+        return [{"filename": "a.txt", "path": "/tmp/a.txt", "mime_type": "text/plain", "size": 1}]
+
+    def forward_message(self, message_id, to, body=None, attachments=None):
+        self._record("forward_message", message_id=message_id, to=to, body=body, attachments=attachments)
         return {"id": "sent3"}
 
     def create_draft(self, to, subject, body, attachments=None, cc=None, html=False):
@@ -247,13 +319,15 @@ async def test_tool_names():
 
     expected_read = {
         "get_profile", "list_messages", "search_messages", "get_message",
-        "list_threads", "list_labels", "get_label",
+        "get_thread", "list_threads", "list_labels", "get_label",
         "list_drafts", "get_draft", "list_filters", "get_filter",
+        "download_attachment",
         "get_changes_start_token", "list_changes",
     }
     expected_write = {
         "send_message", "reply_to_message", "forward_message",
-        "create_draft", "update_draft", "modify_labels", "mark_read",
+        "create_draft", "update_draft", "draft_reply", "send_draft",
+        "modify_labels", "mark_read",
         "archive_message", "star_message", "unstar_message",
         "mark_as_spam", "unmark_spam",
         "create_label", "update_label", "create_filter", "block_sender",
@@ -261,7 +335,7 @@ async def test_tool_names():
     }
     expected_destructive = {
         "trash_message", "untrash_message", "delete_message",
-        "delete_label", "delete_filter",
+        "delete_label", "delete_filter", "delete_draft",
         "batch_trash_messages", "batch_untrash_messages", "batch_delete_messages",
     }
     expected_common = {"list_accounts", "auth_status", "whoami"}
@@ -331,7 +405,65 @@ async def test_send_message_args(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Test 4: get_profile read tool
+# Test 4: get_message format routing
+# ---------------------------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_get_message_defaults_to_text(monkeypatch):
+    fake, patched = make_fake_api()
+    monkeypatch.setattr(server, "_api", patched)
+
+    result = await server.mcp.call_tool("get_message", {"message_id": "abc"})
+    data = parse_result(result)
+
+    assert data["ok"] is True
+    assert data["data"]["body_text"] == "hello"
+    assert fake.calls["get_message_text"]["message_id"] == "abc"
+    assert "get_message" not in fake.calls
+
+
+@pytest.mark.anyio
+async def test_get_message_format_full(monkeypatch):
+    fake, patched = make_fake_api()
+    monkeypatch.setattr(server, "_api", patched)
+
+    result = await server.mcp.call_tool("get_message", {"message_id": "abc", "format": "full"})
+    data = parse_result(result)
+
+    assert data["ok"] is True
+    assert fake.calls["get_message"] == {"message_id": "abc", "format": "full"}
+    assert "get_message_text" not in fake.calls
+
+
+@pytest.mark.anyio
+async def test_get_thread_defaults_to_text(monkeypatch):
+    fake, patched = make_fake_api()
+    monkeypatch.setattr(server, "_api", patched)
+
+    result = await server.mcp.call_tool("get_thread", {"thread_id": "t1"})
+    data = parse_result(result)
+
+    assert data["ok"] is True
+    assert data["data"]["messages"][0]["body_text"] == "hello"
+    assert fake.calls["get_thread_text"]["thread_id"] == "t1"
+    assert "get_thread" not in fake.calls
+
+
+@pytest.mark.anyio
+async def test_get_thread_format_full(monkeypatch):
+    fake, patched = make_fake_api()
+    monkeypatch.setattr(server, "_api", patched)
+
+    result = await server.mcp.call_tool("get_thread", {"thread_id": "t1", "format": "full"})
+    data = parse_result(result)
+
+    assert data["ok"] is True
+    assert fake.calls["get_thread"] == {"thread_id": "t1", "format": "full"}
+    assert "get_thread_text" not in fake.calls
+
+
+# ---------------------------------------------------------------------------
+# Test 5: get_profile read tool
 # ---------------------------------------------------------------------------
 
 @pytest.mark.anyio
@@ -348,7 +480,7 @@ async def test_get_profile(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Test 5: destructive tool is registered and works correctly
+# Test 6: destructive tool is registered and works correctly
 # ---------------------------------------------------------------------------
 
 @pytest.mark.anyio
@@ -364,7 +496,7 @@ async def test_delete_message(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Test 6: READONLY env hides mutating tools (subprocess approach)
+# Test 7: READONLY env hides mutating tools (subprocess approach)
 # ---------------------------------------------------------------------------
 
 def test_readonly_hides_mutating_tools():

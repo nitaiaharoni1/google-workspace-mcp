@@ -45,8 +45,9 @@ EXPECTED_TOOLS = {
     "search_events", "get_event", "get_recurring_event_instances",
     "freebusy_query", "find_available_slots", "get_colors", "list_event_changes",
     # write
-    "create_event", "update_event", "quick_add_event", "move_event",
-    "add_attendees", "remove_attendees", "propose_new_time",
+    "create_event", "create_out_of_office", "create_focus_time",
+    "update_event", "quick_add_event", "move_event",
+    "add_attendees", "remove_attendees", "respond_to_event", "propose_new_time",
     "create_calendar", "update_calendar",
     # destructive
     "delete_event", "delete_calendar", "clear_calendar",
@@ -63,8 +64,8 @@ async def test_tool_list_includes_expected_names():
 @pytest.mark.anyio
 async def test_tool_count():
     tools = await server.mcp.list_tools()
-    # 3 common + 12 read + 9 write + 3 destructive = 27
-    assert len(tools) == 27
+    # 3 common + 11 read + 12 write + 3 destructive = 29
+    assert len(tools) == 29
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +175,69 @@ async def test_create_event_calls_api_with_correct_args(fake_api):
         timezone="UTC",
         color_id=None,
         add_meet=False,
+    )
+
+
+@pytest.mark.anyio
+async def test_create_out_of_office_calls_status_event(fake_api):
+    fake_api.create_status_event.return_value = {
+        "id": "ooo1",
+        "eventType": "outOfOffice",
+    }
+
+    result = await server.mcp.call_tool(
+        "create_out_of_office",
+        {
+            "start_time": "2025-06-16T09:00:00",
+            "end_time": "2025-06-20T18:00:00",
+            "timezone": "UTC",
+            "calendar_id": "primary",
+        },
+    )
+    data = _parse(result)
+
+    assert data["ok"] is True
+    fake_api.create_status_event.assert_called_once_with(
+        event_type="outOfOffice",
+        start_time="2025-06-16T09:00:00",
+        end_time="2025-06-20T18:00:00",
+        timezone="UTC",
+        calendar_id="primary",
+        summary=None,
+        decline_message=None,
+        auto_decline=True,
+    )
+
+
+@pytest.mark.anyio
+async def test_create_focus_time_calls_status_event(fake_api):
+    fake_api.create_status_event.return_value = {
+        "id": "ft1",
+        "eventType": "focusTime",
+    }
+
+    result = await server.mcp.call_tool(
+        "create_focus_time",
+        {
+            "start_time": "2025-06-16T09:00:00",
+            "end_time": "2025-06-16T12:00:00",
+            "timezone": "America/New_York",
+            "summary": "Deep work",
+            "auto_decline": False,
+        },
+    )
+    data = _parse(result)
+
+    assert data["ok"] is True
+    fake_api.create_status_event.assert_called_once_with(
+        event_type="focusTime",
+        start_time="2025-06-16T09:00:00",
+        end_time="2025-06-16T12:00:00",
+        timezone="America/New_York",
+        calendar_id="primary",
+        summary="Deep work",
+        decline_message=None,
+        auto_decline=False,
     )
 
 

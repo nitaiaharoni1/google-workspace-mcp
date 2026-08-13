@@ -6,6 +6,8 @@ import io
 import google_auth_core as core
 from googleapiclient.http import MediaIoBaseUpload
 
+from ..drive.drive_api import DriveAPI
+
 PAGE_PRESETS = {
     "LETTER": (612, 792),
     "A4": (595.28, 841.89),
@@ -560,6 +562,117 @@ class DocsAPI:
         location = {"segmentId": footer_id, "index": index}
         return self._batch(document_id, [{"insertPageNumber": {"location": location}}])
 
+    def _drive_comments(self):
+        inst = getattr(self, "_drive_comments_api", None)
+        if inst is None:
+            inst = DriveAPI(self.account)
+            self._drive_comments_api = inst
+        return inst
+
+    def list_comments(self, document_id, include_deleted=False, page_size=20, page_token=None):
+        return self._drive_comments().list_comments(
+            document_id, include_deleted, page_size, page_token,
+        )
+
+    @staticmethod
+    def _utf16_width(ch):
+        return 2 if ord(ch) > 0xFFFF else 1
+
+    @staticmethod
+    def _body_text_index_map(doc):
+        chars = []
+        indexes = []
+
+        def walk(elements):
+            for el in elements:
+                para = el.get("paragraph")
+                if para:
+                    for e in para.get("elements", []):
+                        tr = e.get("textRun")
+                        if not (tr and tr.get("content")):
+                            continue
+                        start = e.get("startIndex")
+                        if start is None:
+                            continue
+                        content = tr["content"]
+                        chars.append(content)
+                        idx = start
+                        for ch in content:
+                            indexes.append(idx)
+                            idx += DocsAPI._utf16_width(ch)
+                table = el.get("table")
+                if table:
+                    for row in table.get("tableRows", []):
+                        for cell in row.get("tableCells", []):
+                            walk(cell.get("content", []))
+
+        body = (doc or {}).get("body") or {}
+        walk(body.get("content") or [])
+        return "".join(chars), indexes
+
+    @staticmethod
+    def _find_quote(text, indexes, quote, occurrence):
+        if occurrence < 1:
+            raise ValueError("occurrence must be at least 1")
+        start = 0
+        found = 0
+        while True:
+            pos = text.find(quote, start)
+            if pos < 0:
+                break
+            found += 1
+            if found == occurrence:
+                start_index = indexes[pos]
+                end_index = indexes[pos + len(quote) - 1] + DocsAPI._utf16_width(quote[-1])
+                return start_index, end_index
+            start = pos + 1
+        if found == 0:
+            raise ValueError(f"quote {quote!r} not found in document")
+        raise ValueError(
+            f"occurrence {occurrence} is out of range; found {found} match(es) for {quote!r}"
+        )
+
+    @staticmethod
+    def _text_for_range(text, indexes, start_index, end_index):
+        return "".join(
+            ch for ch, idx in zip(text, indexes) if start_index <= idx < end_index
+        )
+
+    def add_comment(
+        self, document_id, content, start_index=None, end_index=None, quote=None, occurrence=1,
+    ):
+        quoted_text = None
+        anchor = None
+        if quote:
+            if occurrence < 1:
+                raise ValueError("occurrence must be at least 1")
+            doc = self.get_document(document_id)
+            text, indexes = self._body_text_index_map(doc)
+            start_index, end_index = self._find_quote(text, indexes, quote, occurrence)
+            anchor = {"docsRange": {"startIndex": start_index, "endIndex": end_index}}
+            quoted_text = quote
+        else:
+            if (start_index is None) != (end_index is None):
+                raise ValueError("start_index and end_index must both be set")
+            if start_index is not None:
+                if start_index >= end_index:
+                    raise ValueError("start_index must be less than end_index")
+                anchor = {"docsRange": {"startIndex": start_index, "endIndex": end_index}}
+                doc = self.get_document(document_id)
+                text, indexes = self._body_text_index_map(doc)
+                extracted = self._text_for_range(text, indexes, start_index, end_index)
+                if extracted:
+                    quoted_text = extracted
+        return self._drive_comments().create_comment(
+            document_id, content, anchor, quoted_text=quoted_text,
+        )
+
+    def reply_to_comment(self, document_id, comment_id, content=None, action=None):
+        return self._drive_comments().reply_to_comment(document_id, comment_id, content, action)
+
+    def delete_comment(self, document_id, comment_id):
+        return self._drive_comments().delete_comment(document_id, comment_id)
+
     # --- markdown (via Drive import/export conversion) ---
 
     def _drive(self, account=None):
@@ -579,6 +692,7 @@ class DocsAPI:
             body=body,
             media_body=self._markdown_media(markdown),
             fields="id, name, mimeType, webViewLink",
+            supportsAllDrives=True,
         ).execute()
         return {
             "documentId": created.get("id"),
@@ -592,6 +706,7 @@ class DocsAPI:
             fileId=document_id,
             media_body=self._markdown_media(markdown),
             fields="id, name, mimeType",
+            supportsAllDrives=True,
         ).execute()
         return {
             "documentId": updated.get("id"),
@@ -632,17 +747,29 @@ class DocsAPI:
             body={"type": "anyone", "role": "reader"},
             sendNotificationEmail=False,
         ).execute()
-        return f"https://drive.google.com/uc?export=view&id={file_id}"
+        uri = f"https://drive.google.com/uc?export=view&id={file_id}"
+        return file_id, uri
 
     def insert_sheets_chart(self, document_id, spreadsheet_id, chart_id, index=1,
-                            width_pt=468, height_pt=280, account=None):
-        """Export a Sheets chart as PNG and insert it into the document."""
+                            width_pt=468, height_pt=280, account=None, make_public=False):
+        """Export a Sheets chart as PNG and insert it into the document.
+
+        Docs can only fetch a public image URL. Pass make_public=True to upload
+        a PNG to Drive, grant anyone/reader, and return fileId so it can be
+        revoked. Default make_public=False raises ValueError and does not upload.
+        """
+        if not make_public:
+            raise ValueError(
+                "Docs can only fetch a public image URL. Pass make_public=True "
+                "to upload a PNG to Drive, grant anyone/reader, and return the "
+                "file id so it can be revoked."
+            )
         from ..sheets.sheets_api import SheetsAPI
 
         resolved_account = account or self.account
         sheets = SheetsAPI(resolved_account)
         image_bytes = sheets.fetch_chart_image_bytes(spreadsheet_id, chart_id)
-        uri = self._upload_public_image_uri(
+        file_id, uri = self._upload_public_image_uri(
             image_bytes,
             name=f"chart-{chart_id}.png",
             account=resolved_account,
@@ -650,4 +777,4 @@ class DocsAPI:
         result = self.insert_chart_image(
             document_id, uri, index=index, width_pt=width_pt, height_pt=height_pt,
         )
-        return {"imageUri": uri, "insertInlineImage": result}
+        return {"imageUri": uri, "fileId": file_id, "insertInlineImage": result}

@@ -69,6 +69,14 @@ def test_sheets_roundtrip_live():
     api.update_range(sheet_id, "A1", [["mcp-live"]])
     got = api.read_range(sheet_id, "A1")
     assert got.get("values") == [["mcp-live"]]
+    comment = api.add_comment(sheet_id, "live note", "A1")
+    comment_id = comment["id"]
+    try:
+        listed = api.list_comments(sheet_id)
+        found = next(c for c in listed["comments"] if c["id"] == comment_id)
+        assert found["place"] == {"sheetsCell": "A1"}
+    finally:
+        api.delete_comment(sheet_id, comment_id)
     api.clear_range(sheet_id, "A1")
 
 
@@ -97,6 +105,16 @@ def test_docs_roundtrip_live():
         docs_api.append_text(doc_id, "MCP live test\n")
         read = docs_api.get_document_text(doc_id)
         assert "MCP live test" in read["text"]
+
+        quote = "MCP live test"
+        comment = docs_api.add_comment(doc_id, "live note", quote=quote)
+        comment_id = comment["id"]
+        listed = docs_api.list_comments(doc_id)
+        found = next(c for c in listed["comments"] if c["id"] == comment_id)
+        assert quote in (found.get("quotedText") or "")
+        assert found.get("place") and "docsRange" in found["place"]
+        docs_api.reply_to_comment(doc_id, comment_id, content="live reply")
+        docs_api.delete_comment(doc_id, comment_id)
 
         content_map = docs_api.get_content_map(doc_id)
         assert any(el["type"] == "paragraph" for el in content_map["elements"])

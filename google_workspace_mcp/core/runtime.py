@@ -1,6 +1,6 @@
 """Shared runtime: account resolution + warm-client cache, the read-only gate,
 error mapping, and the response envelope. Every tool in every server goes
-through these helpers, which is what keeps the three servers aligned.
+through these helpers, which is what keeps the five servers aligned.
 """
 
 from __future__ import annotations
@@ -78,6 +78,8 @@ def run_tool(fn: Callable[[], Any]) -> Any:
         return fn()
     except core.GoogleCoreError:
         raise
+    except ValueError as e:
+        raise core.InvalidArgumentError(str(e)) from e
     except Exception as e:  # noqa: BLE001 - normalize everything to GoogleCoreError
         raise core.map_exception(e)
 

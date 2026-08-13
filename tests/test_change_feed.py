@@ -1,6 +1,7 @@
 """Unit and server tests for Gmail/Drive/Calendar change-feed tools."""
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -17,7 +18,11 @@ from google_workspace_mcp.calendar.changes_api import CalendarChangesAPI, trim_e
 from google_workspace_mcp.drive import server as drive_server
 from google_workspace_mcp.drive.drive_api import DriveAPI, normalize_drive_change
 from google_workspace_mcp.gmail import server as gmail_server
-from google_workspace_mcp.gmail.changes_api import GmailChangesAPI, normalize_history_records
+from google_workspace_mcp.gmail.changes_api import (
+    GmailChangesAPI,
+    normalize_history_records,
+    project_message_text,
+)
 
 
 @pytest.fixture
@@ -141,6 +146,159 @@ def _gmail_api_with_mock(monkeypatch):
     return api, svc
 
 
+def _b64(text: str) -> str:
+    return base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
+
+
+def test_project_message_text_prefers_plain_over_html():
+    out = project_message_text(
+        {
+            "id": "m1",
+            "threadId": "t1",
+            "payload": {
+                "mimeType": "multipart/alternative",
+                "headers": [{"name": "Subject", "value": "Hi"}],
+                "parts": [
+                    {"mimeType": "text/plain", "body": {"data": _b64("plain body")}},
+                    {
+                        "mimeType": "text/html",
+                        "body": {"data": _b64("<p>html body</p>")},
+                    },
+                ],
+            },
+        }
+    )
+    assert out["body_text"] == "plain body"
+    assert out["subject"] == "Hi"
+    assert out["attachments"] == []
+
+
+def test_project_message_text_strips_html_when_no_plain():
+    out = project_message_text(
+        {
+            "id": "m1",
+            "payload": {
+                "mimeType": "multipart/related",
+                "parts": [
+                    {
+                        "mimeType": "text/html",
+                        "body": {"data": _b64("<p>Hello<br>world</p><script>x()</script>")},
+                    },
+                    {
+                        "mimeType": "image/png",
+                        "filename": "pic.png",
+                        "body": {"attachmentId": "att1", "size": 12},
+                    },
+                ],
+            },
+        }
+    )
+    assert out["body_text"] == "Hello\nworld"
+    assert out["attachments"] == [
+        {
+            "filename": "pic.png",
+            "mimeType": "image/png",
+            "size": 12,
+            "attachmentId": "att1",
+        }
+    ]
+
+
+def test_project_message_text_skips_nested_attachment_parts():
+    out = project_message_text(
+        {
+            "id": "m1",
+            "payload": {
+                "mimeType": "multipart/mixed",
+                "parts": [
+                    {"mimeType": "text/plain", "body": {"data": _b64("main")}},
+                    {
+                        "mimeType": "message/rfc822",
+                        "filename": "fwd.eml",
+                        "body": {"attachmentId": "fwd1", "size": 99},
+                        "parts": [
+                            {"mimeType": "text/plain", "body": {"data": _b64("forwarded")}},
+                        ],
+                    },
+                ],
+            },
+        }
+    )
+    assert out["body_text"] == "main"
+    assert out["attachments"][0]["filename"] == "fwd.eml"
+
+
+def test_gmail_get_message_text_decodes_body(monkeypatch):
+    api, svc = _gmail_api_with_mock(monkeypatch)
+    encoded = base64.urlsafe_b64encode(b"hello").decode().rstrip("=")
+    svc.users().messages().get().execute.return_value = {
+        "id": "m1",
+        "threadId": "t1",
+        "labelIds": ["INBOX"],
+        "snippet": "hello",
+        "payload": {
+            "mimeType": "text/plain",
+            "headers": [
+                {"name": "Subject", "value": "Hi"},
+                {"name": "From", "value": "a@x.com"},
+                {"name": "To", "value": "b@x.com"},
+                {"name": "Date", "value": "Thu, 13 Aug 2026"},
+            ],
+            "body": {"data": encoded},
+        },
+    }
+    out = api.get_message_text("m1")
+    assert out["body_text"] == "hello"
+    _, kwargs = svc.users().messages().get.call_args
+    assert kwargs["id"] == "m1"
+    assert kwargs["format"] == "full"
+
+
+def test_gmail_get_message_text_fetches_hosted_plain_body(monkeypatch):
+    api, svc = _gmail_api_with_mock(monkeypatch)
+    encoded = base64.urlsafe_b64encode(b"hosted body").decode().rstrip("=")
+    svc.users().messages().get().execute.return_value = {
+        "id": "m1",
+        "payload": {
+            "mimeType": "text/plain",
+            "headers": [{"name": "Subject", "value": "Hi"}],
+            "body": {"attachmentId": "att-body", "size": 12},
+        },
+    }
+    svc.users().messages().attachments().get().execute.return_value = {"data": encoded}
+    out = api.get_message_text("m1")
+    assert out["body_text"] == "hosted body"
+    assert out["attachments"] == []
+    _, kwargs = svc.users().messages().attachments().get.call_args
+    assert kwargs["id"] == "att-body"
+    assert kwargs["messageId"] == "m1"
+
+
+def test_gmail_get_thread_text_projects_messages(monkeypatch):
+    api, svc = _gmail_api_with_mock(monkeypatch)
+    svc.users().threads().get().execute.return_value = {
+        "id": "t1",
+        "historyId": "9",
+        "messages": [
+            {
+                "id": "m1",
+                "threadId": "t1",
+                "payload": {
+                    "mimeType": "text/plain",
+                    "headers": [{"name": "Subject", "value": "Hi"}],
+                    "body": {"data": _b64("hello")},
+                },
+            }
+        ],
+    }
+    out = api.get_thread_text("t1")
+    assert out["id"] == "t1"
+    assert out["messages"][0]["body_text"] == "hello"
+    _, kwargs = svc.users().threads().get.call_args
+    assert kwargs["id"] == "t1"
+    assert kwargs["format"] == "full"
+
+
 def test_gmail_get_changes_start_token(monkeypatch):
     api, svc = _gmail_api_with_mock(monkeypatch)
     svc.users().getProfile().execute.return_value = {
@@ -247,6 +405,88 @@ def test_calendar_list_event_changes_expired_sync_token(monkeypatch):
     svc.events().list().execute.side_effect = _http_error(410)
     with pytest.raises(ValueError, match="re-baseline"):
         api.list_event_changes(sync_token="old")
+
+
+def test_create_status_event_out_of_office_insert(monkeypatch):
+    api, svc = _calendar_api_with_mock(monkeypatch)
+    svc.events().insert().execute.return_value = {
+        "id": "ooo1",
+        "eventType": "outOfOffice",
+    }
+    out = api.create_status_event(
+        "outOfOffice",
+        "2026-08-17T09:00:00",
+        "2026-08-21T18:00:00",
+    )
+    assert out["eventType"] == "outOfOffice"
+    _, kwargs = svc.events().insert.call_args
+    assert kwargs["calendarId"] == "primary"
+    assert "conferenceDataVersion" not in kwargs
+    body = kwargs["body"]
+    assert body["eventType"] == "outOfOffice"
+    assert body["transparency"] == "opaque"
+    assert body["summary"] == "Out of office"
+    assert body["start"] == {"dateTime": "2026-08-17T09:00:00", "timeZone": "UTC"}
+    assert body["end"] == {"dateTime": "2026-08-21T18:00:00", "timeZone": "UTC"}
+    assert "conferenceData" not in body
+    assert body["outOfOfficeProperties"] == {
+        "autoDeclineMode": "declineOnlyNewConflictingInvitations",
+        "declineMessage": "Declining because I am out of office.",
+    }
+
+
+def test_create_status_event_focus_time_insert(monkeypatch):
+    api, svc = _calendar_api_with_mock(monkeypatch)
+    svc.events().insert().execute.return_value = {
+        "id": "ft1",
+        "eventType": "focusTime",
+    }
+    api.create_status_event(
+        "focusTime",
+        "2026-08-17T09:00:00",
+        "2026-08-17T12:00:00",
+        timezone="America/New_York",
+        summary="Deep work",
+        auto_decline=False,
+    )
+    _, kwargs = svc.events().insert.call_args
+    body = kwargs["body"]
+    assert body["eventType"] == "focusTime"
+    assert body["summary"] == "Deep work"
+    assert body["transparency"] == "opaque"
+    assert body["start"]["timeZone"] == "America/New_York"
+    assert body["focusTimeProperties"] == {
+        "autoDeclineMode": "declineNone",
+        "declineMessage": "Declining because I am in focus time.",
+        "chatStatus": "doNotDisturb",
+    }
+
+
+def test_create_status_event_rejects_secondary_calendar(monkeypatch):
+    api, _svc = _calendar_api_with_mock(monkeypatch)
+    with pytest.raises(ValueError, match="primary calendar"):
+        api.create_status_event(
+            "outOfOffice",
+            "2026-08-17T09:00:00",
+            "2026-08-17T10:00:00",
+            calendar_id="secondary@x.com",
+        )
+
+
+def test_create_status_event_rejects_unknown_type(monkeypatch):
+    api, _svc = _calendar_api_with_mock(monkeypatch)
+    with pytest.raises(ValueError, match="outOfOffice"):
+        api.create_status_event("default", "2026-08-17T09:00:00", "2026-08-17T10:00:00")
+
+
+def test_create_status_event_parses_casual_times(monkeypatch):
+    api, svc = _calendar_api_with_mock(monkeypatch)
+    svc.events().insert().execute.return_value = {"id": "ooo1", "eventType": "outOfOffice"}
+    api.create_status_event("outOfOffice", "2026-08-17", "August 21 2026 6pm")
+    _, kwargs = svc.events().insert.call_args
+    body = kwargs["body"]
+    assert body["start"]["dateTime"].startswith("2026-08-17T")
+    assert body["end"]["dateTime"].startswith("2026-08-21T18:00:00")
 
 
 # --- Server-level tool wiring ---

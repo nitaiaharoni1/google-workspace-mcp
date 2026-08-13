@@ -1,6 +1,8 @@
 """Google Sheets MCP server: read/write values and manage sheet structure."""
 from __future__ import annotations
 
+import json
+
 from ..core import build_server, get_api, ok, register, run_tool
 from .sheets_api import SheetsAPI
 
@@ -10,6 +12,7 @@ mcp = build_server(
     "Ranges use A1 notation. When writing tabular data, prefer write_table (or update_range followed by "
     "format_table / optimize_layout) so the sheet stays human-readable: content-aware column widths, "
     "wrapped long text, alternating row colors. Do not freeze rows/columns unless the user asks.",
+    service_name="sheets",
 )
 
 
@@ -369,6 +372,29 @@ def write_formulas(account: str | None = None, spreadsheet_id: str = "", range: 
     return ok(resolved, data)
 
 
+@register(mcp, mutating=True)
+def add_chart(account: str | None = None, spreadsheet_id: str = "", range: str = "", chart_type: str = "COLUMN", title: str | None = None, stacked: bool = False) -> dict:
+    """Create a chart from a range (A1 with sheet name, e.g. Sheet1!A1:C10). chart_type is COLUMN/BAR/LINE/AREA/PIE. First column is the X axis; other columns are series."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.add_chart(spreadsheet_id, range, chart_type, title, stacked))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def batch_update(account: str | None = None, spreadsheet_id: str = "", requests: list[dict] | str | None = None) -> dict:
+    """Execute raw Sheets batchUpdate requests. Pass a list of request dicts or a JSON string."""
+    api, resolved = _api(account)
+
+    def _call():
+        raw = requests
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        return api.batch_update(spreadsheet_id, raw)
+
+    data = run_tool(_call)
+    return ok(resolved, data)
+
+
 # --- TEXT EDITING (mutating) tools ---
 
 @register(mcp, mutating=True)
@@ -416,6 +442,59 @@ def regex_extract(account: str | None = None, spreadsheet_id: str = "", range: s
     """Extract the first regex match (or a capture group) from each cell in a single column into target_range. group=0 is the whole match. target_range defaults in-place (overwriting the source column). Non-matching cells become ''."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.regex_extract(spreadsheet_id, range, pattern, group, target_range))
+    return ok(resolved, data)
+
+
+@register(mcp)
+def list_comments(
+    account: str | None = None,
+    spreadsheet_id: str = "",
+    include_deleted: bool = False,
+    page_size: int = 20,
+    page_token: str | None = None,
+) -> dict:
+    """List comment threads on a spreadsheet (Drive discussions, not cell markers).
+
+    Pass page_token from a previous response's next_page_token to continue.
+    """
+    api, resolved = _api(account)
+    raw = run_tool(lambda: api.list_comments(spreadsheet_id, include_deleted, page_size, page_token))
+    next_token = raw.pop("nextPageToken", None)
+    return ok(resolved, raw, next_page_token=next_token)
+
+
+@register(mcp, mutating=True)
+def add_comment(
+    account: str | None = None,
+    spreadsheet_id: str = "",
+    content: str = "",
+    cell: str | None = None,
+) -> dict:
+    """Add a comment thread on a spreadsheet. cell (A1, e.g. Sheet1!B2) is remembered, not a Sheets pin."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.add_comment(spreadsheet_id, content, cell))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def reply_to_comment(
+    account: str | None = None,
+    spreadsheet_id: str = "",
+    comment_id: str = "",
+    content: str | None = None,
+    action: str | None = None,
+) -> dict:
+    """Reply to a spreadsheet discussion, or pass action='resolve' / 'reopen'."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.reply_to_comment(spreadsheet_id, comment_id, content, action))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True, destructive=True)
+def delete_comment(account: str | None = None, spreadsheet_id: str = "", comment_id: str = "") -> dict:
+    """Delete a spreadsheet discussion thread."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.delete_comment(spreadsheet_id, comment_id))
     return ok(resolved, data)
 
 

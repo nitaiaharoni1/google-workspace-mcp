@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import json
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from google_workspace_mcp.drive.drive_api import COMMENT_FIELDS
 from google_workspace_mcp.sheets import server
 from google_workspace_mcp.sheets.sheets_api import SheetsAPI, plan_column_layout
 
@@ -31,8 +33,19 @@ def mock_service():
 @pytest.fixture
 def sheets_api(mock_service):
     with patch("google_auth_core.get_service", return_value=mock_service):
-        api = SheetsAPI("x@x.com")
-    return api, mock_service
+        yield SheetsAPI("x@x.com"), mock_service
+
+
+def _sheets_with_drive(monkeypatch):
+    sheets_svc = MagicMock()
+    drive_svc = MagicMock()
+
+    def fake(name, version="v4", account=None):
+        return drive_svc if name == "drive" else sheets_svc
+
+    monkeypatch.setattr("google_auth_core.get_service", fake)
+    sheets_svc.spreadsheets().values().get().execute.return_value = {}
+    return SheetsAPI("x@x.com"), drive_svc
 
 
 class TestSheetsAPIUnit:
@@ -157,6 +170,19 @@ class TestSheetsAPIUnit:
             body={"valueInputOption": "USER_ENTERED", "data": payload},
         )
         assert result == {"totalUpdatedCells": 4}
+
+    def test_batch_update_passthrough(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().batchUpdate.return_value.execute.return_value = {"ok": True}
+        payload = [{"addSheet": {"properties": {"title": "X"}}}]
+        api.batch_update("sid", payload)
+        _, kwargs = svc.spreadsheets().batchUpdate.call_args
+        assert kwargs["body"]["requests"] == payload
+
+    def test_batch_update_rejects_empty(self, sheets_api):
+        api, _svc = sheets_api
+        with pytest.raises(ValueError, match="non-empty"):
+            api.batch_update("sid", [])
 
     def test_get_spreadsheet(self, sheets_api):
         api, svc = sheets_api
@@ -585,6 +611,65 @@ class TestSheetsAPIDimensions:
             for c in svc.spreadsheets().batchUpdate.call_args_list
         )
 
+    def test_add_chart_column_splits_domain_and_series(self, api_with_meta):
+        api, svc = api_with_meta
+        svc.spreadsheets().batchUpdate.return_value.execute.return_value = {
+            "replies": [{"addChart": {"chart": {"chartId": 99}}}]
+        }
+        result = api.add_chart("sid", "Tab!A1:C10")
+        assert result["chartId"] == 99
+        _, kwargs = svc.spreadsheets().batchUpdate.call_args
+        chart = kwargs["body"]["requests"][0]["addChart"]["chart"]
+        basic = chart["spec"]["basicChart"]
+        assert basic["chartType"] == "COLUMN"
+        assert basic["legendPosition"] == "BOTTOM_LEGEND"
+        assert basic["headerCount"] == 1
+        assert "stackedType" not in basic
+        domain = basic["domains"][0]["domain"]["sourceRange"]["sources"][0]
+        assert domain["startColumnIndex"] == 0
+        assert domain["endColumnIndex"] == 1
+        assert domain["startRowIndex"] == 0
+        assert domain["endRowIndex"] == 10
+        series_cols = [
+            s["series"]["sourceRange"]["sources"][0]["startColumnIndex"]
+            for s in basic["series"]
+        ]
+        assert series_cols == [1, 2]
+        anchor = chart["position"]["overlayPosition"]["anchorCell"]
+        assert anchor == {"sheetId": 7, "rowIndex": 0, "columnIndex": 3}
+
+    def test_add_chart_pie_accepted(self, api_with_meta):
+        api, svc = api_with_meta
+        api.add_chart("sid", "Tab!A1:B5", chart_type="PIE")
+        _, kwargs = svc.spreadsheets().batchUpdate.call_args
+        spec = kwargs["body"]["requests"][0]["addChart"]["chart"]["spec"]
+        assert "basicChart" not in spec
+        pie = spec["pieChart"]
+        assert pie["legendPosition"] == "RIGHT_LEGEND"
+        assert "domain" in pie and "series" in pie
+
+    def test_add_chart_stacked(self, api_with_meta):
+        api, svc = api_with_meta
+        api.add_chart("sid", "Tab!A1:C10", stacked=True)
+        _, kwargs = svc.spreadsheets().batchUpdate.call_args
+        basic = kwargs["body"]["requests"][0]["addChart"]["chart"]["spec"]["basicChart"]
+        assert basic["stackedType"] == "STACKED"
+
+    def test_add_chart_rejects_bad_type(self, sheets_api):
+        api, _svc = sheets_api
+        with pytest.raises(ValueError, match="chart_type"):
+            api.add_chart("sid", "Tab!A1:C10", chart_type="SCATTER")
+
+    def test_add_chart_accepts_lowercase_type(self, api_with_meta):
+        api, svc = api_with_meta
+        svc.spreadsheets().batchUpdate.return_value.execute.return_value = {
+            "replies": [{"addChart": {"chart": {"chartId": 1}}}]
+        }
+        api.add_chart("sid", "Tab!A1:C10", chart_type="column")
+        _, kwargs = svc.spreadsheets().batchUpdate.call_args
+        spec = kwargs["body"]["requests"][0]["addChart"]["chart"]["spec"]["basicChart"]
+        assert spec["chartType"] == "COLUMN"
+
     def test_write_table_rejects_range_anchor(self, api_with_meta):
         api, _svc = api_with_meta
         with pytest.raises(ValueError, match="single cell"):
@@ -942,6 +1027,45 @@ class TestSheetsAPITextEditing:
         with pytest.raises(ValueError, match="invalid capture group"):
             api.regex_extract("sid", "Sheet1!A1", r"\d+", group=2)
 
+    def test_add_comment_encodes_sheets_cell(self, monkeypatch):
+        api, drive = _sheets_with_drive(monkeypatch)
+        api.service.spreadsheets().values().get().execute.return_value = {
+            "values": [["hello"]],
+        }
+        drive.comments().create().execute.return_value = {
+            "id": "c1", "content": "check", "author": {"displayName": "N"},
+            "anchor": json.dumps({"sheetsCell": "Sheet1!B2"}),
+            "quotedFileContent": {"mimeType": "text/plain", "value": "hello"},
+        }
+        out = api.add_comment("sid", "check", "Sheet1!B2")
+        drive.comments().create.assert_called_with(
+            fileId="sid",
+            body={
+                "content": "check",
+                "anchor": json.dumps({"sheetsCell": "Sheet1!B2"}),
+                "quotedFileContent": {"mimeType": "text/plain", "value": "hello"},
+            },
+            fields=COMMENT_FIELDS,
+        )
+        assert out["place"] == {"sheetsCell": "Sheet1!B2"}
+
+    def test_add_comment_rejects_range(self, monkeypatch):
+        api, _ = _sheets_with_drive(monkeypatch)
+        with pytest.raises(ValueError, match="single cell"):
+            api.add_comment("sid", "check", "Sheet1!A1:B2")
+
+    def test_add_comment_omits_anchor_without_cell(self, monkeypatch):
+        api, drive = _sheets_with_drive(monkeypatch)
+        drive.comments().create().execute.return_value = {
+            "id": "c1", "content": "check",
+        }
+        api.add_comment("sid", "check", cell=None)
+        drive.comments().create.assert_called_with(
+            fileId="sid",
+            body={"content": "check"},
+            fields=COMMENT_FIELDS,
+        )
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # (b) Server integration tests — monkeypatch _api
@@ -984,10 +1108,12 @@ async def test_list_tools_includes_expected(patched_server):
         "merge_cells", "unmerge_cells", "add_banding", "update_banding", "delete_banding",
         "add_table", "update_table", "delete_table", "format_table", "read_formulas", "write_formulas",
         "optimize_layout", "write_table",
+        "add_chart", "batch_update",
         "find_replace", "copy_paste", "cut_paste", "hide_columns", "hide_rows",
         # text editing
         "edit_cell", "transform_text", "regex_replace",
         "split_column", "join_columns", "regex_extract",
+        "list_comments", "add_comment", "reply_to_comment", "delete_comment",
         # common tools
         "list_accounts", "auth_status", "whoami",
     }
@@ -1001,6 +1127,30 @@ async def test_optimize_layout_tool(patched_server):
     payload = _parse_result(raw)
     assert payload["ok"] is True
     patched_server.optimize_layout.assert_called_once_with("sid", "Tab", 320, 48, True)
+
+
+@pytest.mark.anyio
+async def test_add_chart_tool(patched_server):
+    patched_server.add_chart.return_value = {"chartId": 42, "replies": []}
+    raw = await mcp.call_tool("add_chart", {
+        "spreadsheet_id": "sid", "range": "Sheet1!A1:C10",
+    })
+    payload = _parse_result(raw)
+    assert payload["ok"] is True
+    assert payload["data"]["chartId"] == 42
+    patched_server.add_chart.assert_called_once_with("sid", "Sheet1!A1:C10", "COLUMN", None, False)
+
+
+@pytest.mark.anyio
+async def test_batch_update_tool(patched_server):
+    patched_server.batch_update.return_value = {"replies": []}
+    requests = [{"addSheet": {"properties": {"title": "X"}}}]
+    raw = await mcp.call_tool("batch_update", {
+        "spreadsheet_id": "sid", "requests": requests,
+    })
+    payload = _parse_result(raw)
+    assert payload["ok"] is True
+    patched_server.batch_update.assert_called_once_with("sid", requests)
 
 
 @pytest.mark.anyio
@@ -1310,6 +1460,92 @@ async def test_update_table_tool(patched_server):
     result = _parse_result(raw)
     assert result["ok"] is True
     assert result["data"] == {"replies": [{}]}
+
+
+@pytest.mark.anyio
+async def test_list_comments_tool(patched_server):
+    patched_server.list_comments.return_value = {
+        "comments": [{"id": "c1"}], "nextPageToken": "n2",
+    }
+    raw = await mcp.call_tool("list_comments", {"spreadsheet_id": "sid"})
+    result = _parse_result(raw)
+    assert result["ok"] is True
+    assert result["next_page_token"] == "n2"
+    assert "nextPageToken" not in result["data"]
+    patched_server.list_comments.assert_called_once_with("sid", False, 20, None)
+
+
+@pytest.mark.anyio
+async def test_list_comments_passes_page_token(patched_server):
+    patched_server.list_comments.return_value = {"comments": []}
+    await mcp.call_tool("list_comments", {"spreadsheet_id": "sid", "page_token": "n1"})
+    patched_server.list_comments.assert_called_once_with("sid", False, 20, "n1")
+
+
+@pytest.mark.anyio
+async def test_add_comment_tool(patched_server):
+    patched_server.add_comment.return_value = {"id": "c1", "content": "note"}
+    raw = await mcp.call_tool("add_comment", {
+        "spreadsheet_id": "sid", "content": "note", "cell": "Sheet1!A1",
+    })
+    result = _parse_result(raw)
+    assert result["ok"] is True
+    assert result["account"] == "test@x.com"
+    assert result["data"]["id"] == "c1"
+    patched_server.add_comment.assert_called_once_with("sid", "note", "Sheet1!A1")
+
+
+@pytest.mark.anyio
+async def test_reply_to_comment_tool(patched_server):
+    patched_server.reply_to_comment.return_value = {"id": "r1", "action": "resolve"}
+    raw = await mcp.call_tool("reply_to_comment", {
+        "spreadsheet_id": "sid", "comment_id": "c1", "action": "resolve",
+    })
+    result = _parse_result(raw)
+    assert result["ok"] is True
+    assert result["account"] == "test@x.com"
+    assert result["data"]["action"] == "resolve"
+    patched_server.reply_to_comment.assert_called_once_with("sid", "c1", None, "resolve")
+
+
+@pytest.mark.anyio
+async def test_delete_comment_tool_marked_destructive():
+    tools = {t.name: t for t in await mcp.list_tools()}
+    desc = (tools["delete_comment"].description or "").lower()
+    assert "destructive" in desc
+
+
+def test_readonly_hides_mutating_tools():
+    import subprocess
+    code = """
+import os
+os.environ["GOOGLE_MCP_READONLY"] = "1"
+
+import importlib
+import google_workspace_mcp.core.runtime as rt
+importlib.reload(rt)
+
+import google_workspace_mcp.sheets.server as srv
+importlib.reload(srv)
+
+import asyncio
+async def main():
+    tools = await srv.mcp.list_tools()
+    names = [t.name for t in tools]
+    assert "add_comment" not in names, f"add_comment should be hidden; got {names}"
+    assert "reply_to_comment" not in names, f"reply_to_comment should be hidden; got {names}"
+    assert "delete_comment" not in names, f"delete_comment should be hidden; got {names}"
+    assert "list_comments" in names, f"list_comments should be present; got {names}"
+    print("OK")
+
+asyncio.run(main())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, f"subprocess failed:\n{result.stdout}\n{result.stderr}"
+    assert "OK" in result.stdout
 
 
 class TestSheetsChartExport:
