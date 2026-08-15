@@ -1,19 +1,24 @@
 {
   "mcpServers": {
     "google-gmail": {
-      "command": "gmail-mcp"
+      "command": "uvx",
+      "args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "--with", "mcp<2", "gmail-mcp"]
     },
     "google-calendar": {
-      "command": "gcal-mcp"
+      "command": "uvx",
+      "args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "--with", "mcp<2", "gcal-mcp"]
     },
     "google-sheets": {
-      "command": "gsheets-mcp"
+      "command": "uvx",
+      "args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "--with", "mcp<2", "gsheets-mcp"]
     },
     "google-docs": {
-      "command": "gdocs-mcp"
+      "command": "uvx",
+      "args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "--with", "mcp<2", "gdocs-mcp"]
     },
     "google-drive": {
-      "command": "gdrive-mcp"
+      "command": "uvx",
+      "args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "--with", "mcp<2", "gdrive-mcp"]
     }
   }
 }

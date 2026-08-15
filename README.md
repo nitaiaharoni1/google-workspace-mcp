@@ -86,8 +86,8 @@ google-auth doctor                  # verify setup anytime
 
 The wizard walks you through creating a Desktop OAuth client in Google Cloud
 Console, logging in, confirming the five APIs are enabled, and prints
-ready-to-paste `.mcp.json` snippets with absolute paths (required by GUI clients
-that do not inherit your shell PATH).
+ready-to-paste `.mcp.json` snippets. Prefer the `uvx --refresh ... @latest`
+form below so clients pick up new PyPI releases on each launch.
 
 You bring your **own** Google OAuth client. There is no shared client embedded
 in the package: Gmail and Drive are Google "restricted" scopes, so a shared
@@ -131,19 +131,33 @@ than blocking the protocol.
 ```json
 {
   "mcpServers": {
-    "google-gmail":    { "command": "gmail-mcp" },
-    "google-calendar": { "command": "gcal-mcp" },
-    "google-sheets":   { "command": "gsheets-mcp" },
-    "google-docs":     { "command": "gdocs-mcp" },
-    "google-drive":    { "command": "gdrive-mcp" }
+    "google-gmail": {
+      "command": "uvx",
+      "args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "gmail-mcp"]
+    },
+    "google-calendar": {
+      "command": "uvx",
+      "args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "gcal-mcp"]
+    },
+    "google-sheets": {
+      "command": "uvx",
+      "args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "gsheets-mcp"]
+    },
+    "google-docs": {
+      "command": "uvx",
+      "args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "gdocs-mcp"]
+    },
+    "google-drive": {
+      "command": "uvx",
+      "args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "gdrive-mcp"]
+    }
   }
 }
 ```
 
-Bare command names work when the install location is on your PATH (e.g. a
-`pipx install`, or an activated venv). GUI clients such as Claude Desktop and
-Cursor do not inherit your shell PATH, so give them the absolute path to each
-script instead (`which gmail-mcp` to find it). Register at user scope to make
+`--refresh` plus `@latest` pulls the current PyPI release on each launch.
+GUI clients such as Claude Desktop and Cursor do not inherit your shell PATH,
+so use the absolute `uvx` path (`which uvx`). Register at user scope to make
 the servers available in every project.
 
 Restart Claude after editing.

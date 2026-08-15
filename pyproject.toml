@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "google-workspace-suite-mcp"
-version = "0.4.3"
+version = "0.4.4"
 description = "Aligned MCP servers for Gmail, Calendar, Sheets, Docs, and Drive with persistent, multi-account auth"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,7 +25,9 @@ classifiers = [
     "Topic :: Office/Business",
 ]
 dependencies = [
-    "mcp>=1.26",
+    # mcp 2.0 removed mcp.server.fastmcp (renamed to mcp.server.mcpserver);
+    # core/server.py still imports FastMCP, so stay on the 1.x line.
+    "mcp>=1.26,<2",
     "google-auth-core>=0.2.0",
     "gmail-cli-oauth>=1.6.0",
     "google-calendar-cli>=1.7.0",
