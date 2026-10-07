@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from typing import Any, Callable, Optional
 
 import google_auth_core as core
@@ -22,6 +23,10 @@ READONLY = _readonly()
 
 _api_cache: dict = {}
 _lock = threading.Lock()
+
+# Seconds to wait before each retry when a connection to Google could not be
+# opened at all (network blip, Wi-Fi/VPN change, wake from sleep).
+_CONNECT_RETRY_DELAYS = (2, 5)
 
 
 def ok(account: str, data: Any, **meta: Any) -> dict:
@@ -73,15 +78,24 @@ def cached_keys() -> list:
 
 
 def run_tool(fn: Callable[[], Any]) -> Any:
-    """Execute an API call, mapping any failure to the shared error taxonomy."""
-    try:
-        return fn()
-    except core.GoogleCoreError:
-        raise
-    except ValueError as e:
-        raise core.InvalidArgumentError(str(e)) from e
-    except Exception as e:  # noqa: BLE001 - normalize everything to GoogleCoreError
-        raise core.map_exception(e)
+    """Execute an API call, mapping any failure to the shared error taxonomy.
+
+    Failures to open a connection at all are retried after a short wait. The
+    request never reached Google in that case, so retrying is safe even for
+    writes such as sending mail.
+    """
+    for delay in (*_CONNECT_RETRY_DELAYS, None):
+        try:
+            return fn()
+        except core.GoogleCoreError:
+            raise
+        except ValueError as e:
+            raise core.InvalidArgumentError(str(e)) from e
+        except Exception as e:  # noqa: BLE001 - normalize everything to GoogleCoreError
+            if delay is not None and core.is_connect_failure(e):
+                time.sleep(delay)
+                continue
+            raise core.map_exception(e)
 
 
 def register(
