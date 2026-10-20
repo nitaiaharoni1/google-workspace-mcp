@@ -27,6 +27,7 @@ classifiers = [
 dependencies = [
     # mcp 2.x API (MCPServer, snake_case types, CallToolResult); not 1.x compatible.
     "mcp>=2,<3",
+    "anyio>=4",
     "google-auth-core>=0.2.1",
     "gmail-cli-oauth>=1.6.0",
     "google-calendar-cli>=1.7.0",
