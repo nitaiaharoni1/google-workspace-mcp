@@ -86,8 +86,8 @@ google-auth doctor                  # verify setup anytime
 
 The wizard walks you through creating a Desktop OAuth client in Google Cloud
 Console, logging in, confirming the five APIs are enabled, and prints
-ready-to-paste `.mcp.json` snippets. Prefer the `uvx --refresh ... @latest`
-form below so clients pick up new PyPI releases on each launch.
+ready-to-paste `.mcp.json` snippets that point at locally installed scripts.
+To run the servers through `uvx` instead, use the pinned form below.
 
 You bring your **own** Google OAuth client. There is no shared client embedded
 in the package: Gmail and Drive are Google "restricted" scopes, so a shared
@@ -150,29 +150,38 @@ than blocking the protocol.
   "mcpServers": {
     "google-gmail": {
       "command": "uvx",
-      "args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "gmail-mcp"]
+      "args": ["--from", "google-workspace-suite-mcp==0.4.5", "gmail-mcp"]
     },
     "google-calendar": {
       "command": "uvx",
-      "args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "gcal-mcp"]
+      "args": ["--from", "google-workspace-suite-mcp==0.4.5", "gcal-mcp"]
     },
     "google-sheets": {
       "command": "uvx",
-      "args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "gsheets-mcp"]
+      "args": ["--from", "google-workspace-suite-mcp==0.4.5", "gsheets-mcp"]
     },
     "google-docs": {
       "command": "uvx",
-      "args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "gdocs-mcp"]
+      "args": ["--from", "google-workspace-suite-mcp==0.4.5", "gdocs-mcp"]
     },
     "google-drive": {
       "command": "uvx",
-      "args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "gdrive-mcp"]
+      "args": ["--from", "google-workspace-suite-mcp==0.4.5", "gdrive-mcp"]
     }
   }
 }
 ```
 
-`--refresh` plus `@latest` pulls the current PyPI release on each launch.
+The `==0.4.5` pin means launches come from uv's cache after the first one:
+fast startup, works offline until the uv cache is cleaned, and a new release
+only runs once you choose it. To upgrade, bump the version in all five entries
+and restart Claude. If you'd rather get every release automatically, use this
+form instead, which checks PyPI on every launch:
+
+```json
+"args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "gmail-mcp"]
+```
+
 GUI clients such as Claude Desktop and Cursor do not inherit your shell PATH,
 so use the absolute `uvx` path (`which uvx`). Register at user scope to make
 the servers available in every project.
