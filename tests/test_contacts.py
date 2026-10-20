@@ -211,8 +211,8 @@ def fake_api(monkeypatch):
 
 
 def _parse(result) -> dict:
-    assert isinstance(result, list) and len(result) == 1
-    return json.loads(result[0].text)
+    assert len(result.content) == 1
+    return json.loads(result.content[0].text)
 
 
 @pytest.mark.anyio
