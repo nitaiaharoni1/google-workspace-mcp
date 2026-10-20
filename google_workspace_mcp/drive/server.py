@@ -16,7 +16,7 @@ def _api(account=None):
 
 
 # --- read ---
-@register(mcp)
+@register(mcp, core=True)
 def search_files(
     account: str | None = None,
     query: str | None = None,
@@ -45,7 +45,7 @@ def search_files(
     return ok(resolved, raw, next_page_token=next_token)
 
 
-@register(mcp)
+@register(mcp, core=True)
 def list_files(
     account: str | None = None,
     folder_id: str | None = None,
@@ -84,7 +84,7 @@ def list_drives(
     return ok(resolved, raw, next_page_token=next_token)
 
 
-@register(mcp)
+@register(mcp, core=True)
 def get_file(account: str | None = None, file_id: str = "") -> dict:
     """Get full metadata for one file id."""
     api, resolved = _api(account)
@@ -92,7 +92,7 @@ def get_file(account: str | None = None, file_id: str = "") -> dict:
     return ok(resolved, data)
 
 
-@register(mcp)
+@register(mcp, core=True)
 def download_file(
     account: str | None = None,
     file_id: str = "",
@@ -109,7 +109,7 @@ def download_file(
     return ok(resolved, data)
 
 
-@register(mcp)
+@register(mcp, core=True)
 def export_file(
     account: str | None = None,
     file_id: str = "",
@@ -127,7 +127,7 @@ def export_file(
     return ok(resolved, data)
 
 
-@register(mcp)
+@register(mcp, core=True)
 def read_file_text(account: str | None = None, file_id: str = "") -> dict:
     """Read small text inline (UTF-8 binary files, or Docs/Sheets exported as text).
 
@@ -200,7 +200,7 @@ def list_changes(
 
 
 # --- write ---
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def upload_file(
     account: str | None = None,
     local_path: str = "",
@@ -239,7 +239,7 @@ def update_file_content(
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def create_folder(
     account: str | None = None,
     name: str = "",
@@ -251,7 +251,7 @@ def create_folder(
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def move_file(
     account: str | None = None,
     file_id: str = "",
@@ -263,7 +263,7 @@ def move_file(
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def rename_file(account: str | None = None, file_id: str = "", name: str = "") -> dict:
     """Rename a file."""
     api, resolved = _api(account)
@@ -271,7 +271,7 @@ def rename_file(account: str | None = None, file_id: str = "", name: str = "") -
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def copy_file(
     account: str | None = None,
     file_id: str = "",
@@ -284,7 +284,7 @@ def copy_file(
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def share_file(
     account: str | None = None,
     file_id: str = "",
@@ -322,7 +322,7 @@ def unshare_file(
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def trash_file(account: str | None = None, file_id: str = "") -> dict:
     """Move a file to trash (reversible from the Drive UI)."""
     api, resolved = _api(account)

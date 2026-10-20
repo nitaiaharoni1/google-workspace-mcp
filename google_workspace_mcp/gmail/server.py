@@ -27,7 +27,7 @@ def get_profile(account: str | None = None) -> dict:
     return ok(resolved, data)
 
 
-@register(mcp)
+@register(mcp, core=True)
 def list_messages(
     account: str | None = None,
     query: str | None = None,
@@ -48,7 +48,7 @@ def list_messages(
     return ok(resolved, page["items"], next_page_token=page.get("nextPageToken"))
 
 
-@register(mcp)
+@register(mcp, core=True)
 def search_messages(
     account: str | None = None,
     query: str | None = None,
@@ -74,7 +74,7 @@ def search_messages(
     return ok(resolved, page["items"], next_page_token=page.get("nextPageToken"))
 
 
-@register(mcp)
+@register(mcp, core=True)
 def get_message(
     account: str | None = None,
     message_id: str = "",
@@ -111,7 +111,7 @@ def list_threads(
     return ok(resolved, page["items"], next_page_token=page.get("nextPageToken"))
 
 
-@register(mcp)
+@register(mcp, core=True)
 def get_thread(
     account: str | None = None,
     thread_id: str = "",
@@ -130,7 +130,7 @@ def get_thread(
     return ok(resolved, data)
 
 
-@register(mcp)
+@register(mcp, core=True)
 def download_attachment(
     account: str | None = None,
     message_id: str = "",
@@ -149,7 +149,7 @@ def download_attachment(
     return ok(resolved, data)
 
 
-@register(mcp)
+@register(mcp, core=True)
 def list_labels(account: str | None = None) -> dict:
     """List all labels (system and user-created) in the mailbox."""
     api, resolved = _api(account)
@@ -165,7 +165,7 @@ def get_label(account: str | None = None, label_id: str = "") -> dict:
     return ok(resolved, data)
 
 
-@register(mcp)
+@register(mcp, core=True)
 def list_drafts(
     account: str | None = None,
     max_results: int = 10,
@@ -248,7 +248,7 @@ def list_changes(
 # WRITE tools (mutating=True)
 # ---------------------------------------------------------------------------
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def send_message(
     account: str | None = None,
     to: str = "",
@@ -270,7 +270,7 @@ def send_message(
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def reply_to_message(
     account: str | None = None,
     message_id: str = "",
@@ -288,7 +288,7 @@ def reply_to_message(
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def draft_reply(
     account: str | None = None,
     message_id: str = "",
@@ -309,7 +309,7 @@ def draft_reply(
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def forward_message(
     account: str | None = None,
     message_id: str = "",
@@ -326,7 +326,7 @@ def forward_message(
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def create_draft(
     account: str | None = None,
     to: str = "",
@@ -372,7 +372,7 @@ def update_draft(
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def send_draft(account: str | None = None, draft_id: str = "") -> dict:
     """Send an existing draft, completing the draft -> review -> send loop.
 
@@ -384,7 +384,7 @@ def send_draft(account: str | None = None, draft_id: str = "") -> dict:
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def modify_labels(
     account: str | None = None,
     message_id: str = "",
@@ -405,7 +405,7 @@ def mark_read(account: str | None = None, message_id: str = "") -> dict:
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def archive_message(account: str | None = None, message_id: str = "") -> dict:
     """Archive a message by removing it from the INBOX."""
     api, resolved = _api(account)
@@ -509,7 +509,7 @@ def batch_modify_labels(
 # DESTRUCTIVE tools (mutating=True, destructive=True)
 # ---------------------------------------------------------------------------
 
-@register(mcp, mutating=True, destructive=True)
+@register(mcp, mutating=True, destructive=True, core=True)
 def trash_message(account: str | None = None, message_id: str = "") -> dict:
     """Move a message to trash (can be recovered with untrash_message)."""
     api, resolved = _api(account)

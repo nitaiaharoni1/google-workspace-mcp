@@ -6,6 +6,7 @@ through these helpers, which is what keeps the five servers aligned.
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 from typing import Any, Callable, Optional
@@ -20,6 +21,14 @@ def _readonly() -> bool:
 
 # Evaluated once at import; servers are launched with the env already set.
 READONLY = _readonly()
+
+# "core" registers only tools tagged core=True; anything else means all tools.
+# Read once at import, like READONLY.
+TOOLSET = os.getenv("GOOGLE_MCP_TOOLSET", "all").strip().lower()
+if TOOLSET not in ("all", "core"):
+    # stderr, not stdout: stdout carries the stdio MCP transport.
+    print(f"GOOGLE_MCP_TOOLSET={TOOLSET!r} is not 'all' or 'core'; registering all tools.",
+          file=sys.stderr)
 
 _api_cache: dict = {}
 _lock = threading.Lock()
@@ -104,18 +113,22 @@ def register(
     mutating: bool = False,
     destructive: bool = False,
     idempotent: bool | None = None,
+    core: bool = False,
 ):
     """Decorator that registers a tool, honoring the read-only gate and
     attaching MCP ToolAnnotations derived from the same flags.
 
     Mutating tools are not registered at all when ``GOOGLE_MCP_READONLY`` is set,
     so they never appear in ``list_tools``. Destructive tools get a clear marker
-    appended to their description.
+    appended to their description. With ``GOOGLE_MCP_TOOLSET=core`` only tools
+    tagged ``core=True`` are registered.
     """
 
     def deco(fn: Callable) -> Callable:
         if mutating and READONLY:
             return fn  # skip registration entirely
+        if TOOLSET == "core" and not core:
+            return fn
         if destructive and fn.__doc__:
             fn.__doc__ = fn.__doc__.rstrip() + (
                 "\n\n[DESTRUCTIVE] Permanently changes or deletes data; cannot be undone."

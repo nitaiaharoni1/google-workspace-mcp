@@ -27,7 +27,7 @@ def get_profile(account: str | None = None) -> dict:
     return ok(resolved, data)
 
 
-@register(mcp)
+@register(mcp, core=True)
 def list_calendars(
     account: str | None = None,
     page_token: str | None = None,
@@ -49,7 +49,7 @@ def get_calendar(account: str | None = None, calendar_id: str = "primary") -> di
     return ok(resolved, data)
 
 
-@register(mcp)
+@register(mcp, core=True)
 def list_events(
     account: str | None = None,
     calendar_id: str = "primary",
@@ -79,7 +79,7 @@ def list_events(
     return ok(resolved, page["items"], next_page_token=page.get("nextPageToken"))
 
 
-@register(mcp)
+@register(mcp, core=True)
 def search_events(
     account: str | None = None,
     query: str = "",
@@ -100,7 +100,7 @@ def search_events(
     return ok(resolved, page["items"], next_page_token=page.get("nextPageToken"))
 
 
-@register(mcp)
+@register(mcp, core=True)
 def get_event(
     account: str | None = None,
     event_id: str = "",
@@ -133,7 +133,7 @@ def get_recurring_event_instances(
     return ok(resolved, page["items"], next_page_token=page.get("nextPageToken"))
 
 
-@register(mcp)
+@register(mcp, core=True)
 def freebusy_query(
     account: str | None = None,
     time_min: str = "",
@@ -150,7 +150,7 @@ def freebusy_query(
     return ok(resolved, data)
 
 
-@register(mcp)
+@register(mcp, core=True)
 def find_available_slots(
     account: str | None = None,
     attendee_emails: list[str] | None = None,
@@ -226,7 +226,7 @@ def list_event_changes(
 # WRITE tools (mutating)
 # ---------------------------------------------------------------------------
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def create_event(
     account: str | None = None,
     summary: str = "",
@@ -317,7 +317,7 @@ def create_focus_time(
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def update_event(
     account: str | None = None,
     event_id: str = "",
@@ -356,7 +356,7 @@ def update_event(
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def quick_add_event(
     account: str | None = None,
     text: str = "",
@@ -431,7 +431,7 @@ def remove_attendees(
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def respond_to_event(
     account: str | None = None,
     event_id: str = "",
@@ -517,7 +517,7 @@ def update_calendar(
 # DESTRUCTIVE tools (mutating + destructive)
 # ---------------------------------------------------------------------------
 
-@register(mcp, mutating=True, destructive=True)
+@register(mcp, mutating=True, destructive=True, core=True)
 def delete_event(
     account: str | None = None,
     event_id: str = "",

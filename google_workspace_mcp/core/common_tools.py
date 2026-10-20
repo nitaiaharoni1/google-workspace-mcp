@@ -14,7 +14,7 @@ from .runtime import register
 
 
 def register_common_tools(mcp, service_name: Optional[str] = None) -> None:
-    @register(mcp)
+    @register(mcp, core=True)
     def list_accounts() -> dict:
         """List configured Google accounts, the default account, and aliases."""
         return {
@@ -26,7 +26,7 @@ def register_common_tools(mcp, service_name: Optional[str] = None) -> None:
             },
         }
 
-    @register(mcp)
+    @register(mcp, core=True)
     def auth_status(account: Optional[str] = None) -> dict:
         """Report token health for one account, or all accounts if omitted."""
         accounts = [core.resolve_account(account)] if account else core.list_accounts()
@@ -35,7 +35,7 @@ def register_common_tools(mcp, service_name: Optional[str] = None) -> None:
         }
         return {"ok": True, "data": statuses}
 
-    @register(mcp)
+    @register(mcp, core=True)
     def whoami(account: Optional[str] = None) -> dict:
         """Resolve an account or alias and report its credential status.
 
