@@ -46,7 +46,7 @@ Adding or editing a tool means following the exact shape used everywhere (see `s
 
 ```python
 @register(mcp, mutating=True, destructive=True)   # flags optional; see below
-def some_tool(account: str | None = None, ...) -> dict:
+def some_tool(account: str | None = None, *, file_id: str, limit: int = 10) -> dict:
     """One-line description shown to the model. First line matters."""
     api, resolved = _api(account)                 # _api = get_api(service, Factory, account)
     data = run_tool(lambda: api.some_call(...))    # run_tool maps exceptions -> GoogleCoreError
@@ -56,6 +56,7 @@ def some_tool(account: str | None = None, ...) -> dict:
 Key invariants, all enforced by `core/runtime.py` — do not bypass them:
 
 - **`account` is always the first param**, `str | None`, defaults to the store's default account. It may be an email or an alias; `get_api` resolves it.
+- **Required params are keyword-only with no default**, after a bare `*`. Never write `file_id: str = ""`: FastMCP would mark it optional in the schema, models would omit it, and the user gets a Google 404 instead of a validation error. Only give a default when the empty or default value is a real choice (e.g. `replacement: str = ""`). `test_required_ids_are_required_in_schema` guards this.
 - **Never build a service client directly in a tool.** Always go through `_api(account)` → `get_api`, which caches one client per `(service, resolved_account)`. This is what guarantees the headline feature: parallel accounts never interfere. A new client type is constructed once and reused for the life of the server.
 - **Wrap the actual Google call in `run_tool(lambda: ...)`** so failures become the shared `GoogleCoreError` taxonomy (missing/expired creds produce actionable `Run: google-auth login <account>` messages).
 - **Return via `ok(resolved, data)`** — return the *resolved* account, not the raw `account` arg.
