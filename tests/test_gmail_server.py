@@ -330,6 +330,7 @@ async def test_tool_names():
         "list_drafts", "get_draft", "list_filters", "get_filter",
         "download_attachment",
         "get_changes_start_token", "list_changes",
+        "search_contacts",
     }
     expected_write = {
         "send_message", "reply_to_message", "forward_message",

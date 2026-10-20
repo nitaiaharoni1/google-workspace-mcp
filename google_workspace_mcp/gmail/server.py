@@ -5,6 +5,7 @@ import os
 import shutil
 import tempfile
 
+from ..contacts.tools import register_contacts_tools
 from ..core import build_server, get_api, ok, register, run_tool
 from ..core.paths import free_path, safe_dir, safe_path, safe_paths
 from .changes_api import GmailChangesAPI
@@ -14,6 +15,7 @@ mcp = build_server(
     "Gmail: read, search, send, draft, label, and manage messages for one or more Google accounts.",
     service_name="gmail",
 )
+register_contacts_tools(mcp, service_name="gmail")
 
 
 def _api(account=None):

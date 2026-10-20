@@ -27,6 +27,7 @@ google_workspace_mcp/
   sheets/    SheetsAPI (Sheets API v4)               -> gsheets-mcp
   docs/      DocsAPI (Docs API v1)                   -> gdocs-mcp
   drive/     DriveAPI (Drive API v3)                 -> gdrive-mcp
+  contacts/  PeopleAPI (People API v1)               -> search_contacts on gmail-mcp + gcal-mcp
 ```
 
 Every tool: takes `account`, resolves it, gets a cached per-account client,
@@ -46,6 +47,20 @@ runs the Google call through shared error mapping, and returns
   table (or banded range) in one call; `optimize_layout` sizes every column to its
   content with a width cap, wraps only what must wrap, and auto-fits row heights.
   Header freezing is opt-in.
+
+### Contact lookup (`gmail-mcp`, `gcal-mcp`)
+
+- **Name to email** — `search_contacts(query="Dana")` lets an agent told "email Dana"
+  or "invite Dana" find the address first. It searches saved contacts, people the
+  account has emailed with ("other contacts"), and, on Workspace accounts, the
+  company directory. Each result has `name`, `emails`, `phone`, and `source`
+  (`contact`, `other`, `directory`); `skipped` lists any source that could not be
+  searched and why (a personal Gmail account has no directory).
+- **Setup** — enable the **People API** in your OAuth client's Cloud project. The
+  token needs `contacts.readonly`, `contacts.other.readonly`, and
+  `directory.readonly`; tokens created before these were added must be refreshed
+  with `google-auth login <account>`. Until then the tool returns an error naming
+  the missing scopes.
 
 ## Install
 
@@ -117,7 +132,7 @@ for each account to get a token that doesn't expire weekly.
 
 - Create or select a project.
 - Enable the APIs you need: Gmail, Google Calendar, Google Sheets, Google Docs,
-  Google Drive.
+  Google Drive, and People (for contact lookup).
 - *APIs & Services → OAuth consent screen*: pick **Internal** (Workspace
   account) or **External** (personal Gmail). For External, click
   **Publish app** so the status is **In production** (see above for why).
