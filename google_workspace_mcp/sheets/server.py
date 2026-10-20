@@ -498,5 +498,131 @@ def delete_comment(account: str | None = None, spreadsheet_id: str = "", comment
     return ok(resolved, data)
 
 
+# --- CONDITIONAL FORMATS / PROTECTED RANGES / NAMED RANGES ---
+
+@register(mcp, mutating=True)
+def add_conditional_format(
+    account: str | None = None,
+    *,
+    spreadsheet_id: str,
+    range: str,
+    condition: str,
+    values: list[str | int | float] | None = None,
+    background_color: str | None = None,
+    text_color: str | None = None,
+    bold: bool | None = None,
+    italic: bool | None = None,
+    min_color: str = "#FFFFFF",
+    mid_color: str | None = None,
+    max_color: str = "#57BB8A",
+    index: int = 0,
+) -> dict:
+    """Add a conditional format rule to a range: highlight cells matching a condition, or a COLOR_SCALE gradient.
+
+    condition: NUMBER_GREATER / NUMBER_GREATER_THAN_EQ / NUMBER_LESS / NUMBER_LESS_THAN_EQ / NUMBER_EQ /
+    NUMBER_NOT_EQ / NUMBER_BETWEEN / NUMBER_NOT_BETWEEN (2 values) / TEXT_CONTAINS / TEXT_NOT_CONTAINS /
+    TEXT_STARTS_WITH / TEXT_ENDS_WITH / TEXT_EQ / BLANK / NOT_BLANK (no values) / CUSTOM_FORMULA
+    (values=['=$B2>100'], relative to the range's top-left cell) / COLOR_SCALE (uses min/mid/max_color).
+    Boolean rules need at least one of background_color, text_color, bold, italic. index 0 = highest priority.
+    """
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.add_conditional_format(
+        spreadsheet_id, range, condition, values, background_color, text_color, bold, italic,
+        min_color, mid_color, max_color, index,
+    ))
+    return ok(resolved, data)
+
+
+@register(mcp)
+def list_conditional_formats(account: str | None = None, *, spreadsheet_id: str, sheet: str | None = None) -> dict:
+    """List conditional format rules per sheet with their index (used by delete_conditional_format)."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.list_conditional_formats(spreadsheet_id, sheet))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True, destructive=True)
+def delete_conditional_format(account: str | None = None, *, spreadsheet_id: str, sheet: str, index: int) -> dict:
+    """Delete the conditional format rule at index on a sheet (by title). Later rules shift up one index."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.delete_conditional_format(spreadsheet_id, sheet, index))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def protect_range(
+    account: str | None = None,
+    *,
+    spreadsheet_id: str,
+    range: str,
+    description: str | None = None,
+    warning_only: bool = False,
+    editors: list[str] | None = None,
+) -> dict:
+    """Protect a range (A1) or a whole sheet (bare sheet title) from edits. Returns protectedRangeId.
+
+    editors: emails allowed to edit (you and the owner always can). warning_only=True only shows a
+    warning on edit and cannot be combined with editors.
+    """
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.protect_range(spreadsheet_id, range, description, warning_only, editors))
+    return ok(resolved, data)
+
+
+@register(mcp)
+def list_protected_ranges(account: str | None = None, *, spreadsheet_id: str) -> dict:
+    """List protected ranges and sheets with their protectedRangeId, A1 range, editors and warning_only flag."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.list_protected_ranges(spreadsheet_id))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True, destructive=True)
+def unprotect_range(account: str | None = None, *, spreadsheet_id: str, protected_range_id: int) -> dict:
+    """Remove a protection by protectedRangeId (see list_protected_ranges), so anyone with edit access can edit it."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.unprotect_range(spreadsheet_id, protected_range_id))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def add_named_range(account: str | None = None, *, spreadsheet_id: str, name: str, range: str) -> dict:
+    """Name a range (A1, or a bare sheet title for the whole sheet) for use in formulas. Returns namedRangeId."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.add_named_range(spreadsheet_id, name, range))
+    return ok(resolved, data)
+
+
+@register(mcp)
+def list_named_ranges(account: str | None = None, *, spreadsheet_id: str) -> dict:
+    """List named ranges with their namedRangeId, name and A1 range."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.list_named_ranges(spreadsheet_id))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True)
+def update_named_range(
+    account: str | None = None,
+    *,
+    spreadsheet_id: str,
+    named_range_id: str,
+    name: str | None = None,
+    range: str | None = None,
+) -> dict:
+    """Rename a named range and/or point it at a new range (A1 or bare sheet title)."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.update_named_range(spreadsheet_id, named_range_id, name, range))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True, destructive=True)
+def delete_named_range(account: str | None = None, *, spreadsheet_id: str, named_range_id: str) -> dict:
+    """Delete a named range by namedRangeId. Formulas that use the name will show #NAME? errors."""
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.delete_named_range(spreadsheet_id, named_range_id))
+    return ok(resolved, data)
+
+
 def main():
     mcp.run()
