@@ -12,6 +12,7 @@ from ..drive.drive_api import DriveAPI
 # ~7 px per character plus ~14 px of cell padding/border.
 CHAR_PX = 7
 CELL_PADDING_PX = 14
+CHART_IMAGE_TIMEOUT_SECONDS = 30
 _CHART_TYPES = frozenset({"COLUMN", "BAR", "LINE", "AREA", "PIE"})
 _STACKED_CHART_TYPES = frozenset({"COLUMN", "BAR", "AREA"})
 
@@ -1015,7 +1016,7 @@ class SheetsAPI:
         import urllib.request
 
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {creds.token}"})
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=CHART_IMAGE_TIMEOUT_SECONDS) as resp:
             data = resp.read()
         if not data:
             raise ValueError(f"empty chart image response for chart_id={chart_id!r}")

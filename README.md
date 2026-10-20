@@ -183,6 +183,18 @@ Every tool advertises MCP-native `ToolAnnotations` (`readOnlyHint`,
 read-only gate. Annotations are hints for well-behaved clients (auto-allow reads,
 confirm destructive writes); `GOOGLE_MCP_READONLY` remains the enforcement
 mechanism — clients must not rely on annotations alone for security.
+Tools that send mail, share files, or overwrite content are marked destructive,
+and those that reach people outside the account also set `openWorldHint`.
+
+## Local file access
+
+Tools that read or write local files (mail attachments, Drive upload/download/
+export, Gmail attachment download) go through one shared path guard: paths are
+resolved (including symlinks) and anything inside the `~/.google` token store
+is refused. Set `GOOGLE_MCP_FILE_ROOT=/some/dir` to confine all local reads and
+writes to that directory (downloads then need an explicit path inside it).
+Downloads never replace an existing file unless the call passes
+`overwrite=true`; a clash in the default temp dir gets a new name instead.
 
 ## Testing
 

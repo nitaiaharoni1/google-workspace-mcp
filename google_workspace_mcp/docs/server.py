@@ -256,7 +256,7 @@ def insert_page_number(account: str | None = None, document_id: str = "", footer
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, destructive=True)
 def batch_update(account: str | None = None, document_id: str = "", requests: list[dict] | str | None = None) -> dict:
     """Execute raw Docs batchUpdate requests. Pass a list of request dicts or a JSON string."""
     api, resolved = _api(account)

@@ -152,6 +152,7 @@ def register(
     mutating: bool = False,
     destructive: bool = False,
     idempotent: bool | None = None,
+    open_world: bool = False,
 ):
     """Decorator that registers a tool, honoring the read-only gate and
     attaching MCP ToolAnnotations derived from the same flags.
@@ -174,6 +175,9 @@ def register(
             # non-destructive tools must set it False explicitly.
             destructiveHint=destructive if mutating else None,
             idempotentHint=idempotent,
+            # True for tools whose effect reaches people outside the account
+            # (sending mail, sharing files).
+            openWorldHint=open_world,
         )
         mcp.tool(annotations=annotations)(_off_loop(fn))
         return fn  # direct callers keep the plain sync function

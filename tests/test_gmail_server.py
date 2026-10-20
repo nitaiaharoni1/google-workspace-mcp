@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 
 import pytest
@@ -22,6 +23,7 @@ class FakeAPI:
 
     def __init__(self):
         self.calls: dict = {}
+        self.duplicate_attachments = 1
 
     def _record(self, method, **kwargs):
         self.calls[method] = kwargs
@@ -159,7 +161,7 @@ class FakeAPI:
 
     # WRITE methods
     def send_message(self, to, subject, body, attachments=None, cc=None, html=False):
-        self._record("send_message", to=to, subject=subject, body=body, cc=cc, html=html)
+        self._record("send_message", to=to, subject=subject, body=body, cc=cc, html=html, attachments=attachments)
         return {"id": "sent1", "threadId": "t1"}
 
     def reply_to_message(self, message_id, body, reply_all=False, additional_cc=None, attachments=None):
@@ -199,7 +201,12 @@ class FakeAPI:
             output_dir=output_dir,
             attachment_id=attachment_id,
         )
-        return [{"filename": "a.txt", "path": "/tmp/a.txt", "mime_type": "text/plain", "size": 1}]
+        path = os.path.join(output_dir, "a.txt")
+        with open(path, "w") as f:
+            f.write("x")
+        files = [{"filename": "a.txt", "path": path, "mime_type": "text/plain", "size": 1}]
+        # Mirrors the real API: same-named attachments land on one path.
+        return files * self.duplicate_attachments
 
     def forward_message(self, message_id, to, body=None, attachments=None):
         self._record("forward_message", message_id=message_id, to=to, body=body, attachments=attachments)
@@ -533,3 +540,49 @@ asyncio.run(main())
     )
     assert result.returncode == 0, f"subprocess failed:\n{result.stdout}\n{result.stderr}"
     assert "OK" in result.stdout
+
+
+@pytest.mark.anyio
+async def test_send_message_refuses_token_store_attachment(monkeypatch, store_env, tmp_path):
+    fake, patched = make_fake_api()
+    monkeypatch.setattr(server, "_api", patched)
+    secret = store_env / "credentials.json"
+    secret.write_text("{}")
+    ok_file = tmp_path / "deck.pdf"
+    ok_file.write_text("pdf")
+
+    with pytest.raises(Exception, match="token store"):
+        await server.mcp.call_tool("send_message", {"to": "x@y.com", "attachments": [str(ok_file), str(secret)]})
+    assert "send_message" not in fake.calls
+
+    await server.mcp.call_tool("send_message", {"to": "x@y.com", "attachments": [str(ok_file)]})
+    assert fake.calls["send_message"]["attachments"] == [str(ok_file)]
+
+
+@pytest.mark.anyio
+async def test_download_attachment_refuses_overwrite(monkeypatch, store_env, tmp_path):
+    fake, patched = make_fake_api()
+    monkeypatch.setattr(server, "_api", patched)
+    existing = tmp_path / "a.txt"
+    existing.write_text("keep me")
+
+    with pytest.raises(Exception, match="overwrite=True"):
+        await server.mcp.call_tool("download_attachment", {"message_id": "m1", "output_dir": str(tmp_path)})
+    assert existing.read_text() == "keep me"
+
+    data = parse_result(await server.mcp.call_tool(
+        "download_attachment", {"message_id": "m1", "output_dir": str(tmp_path), "overwrite": True}
+    ))
+    assert data["data"][0]["path"] == str(existing)
+    assert existing.read_text() == "x"
+
+
+@pytest.mark.anyio
+async def test_download_attachment_same_named_attachments(monkeypatch, store_env, tmp_path):
+    fake, patched = make_fake_api()
+    fake.duplicate_attachments = 2
+    monkeypatch.setattr(server, "_api", patched)
+    data = parse_result(await server.mcp.call_tool(
+        "download_attachment", {"message_id": "m1", "output_dir": str(tmp_path)}
+    ))
+    assert [f["path"] for f in data["data"]] == [str(tmp_path / "a.txt")]

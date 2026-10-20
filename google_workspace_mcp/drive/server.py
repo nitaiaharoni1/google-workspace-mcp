@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from ..core import build_server, get_api, ok, register, run_tool
+from ..core.paths import safe_path
 from .drive_api import DriveAPI
 
 mcp = build_server(
@@ -97,15 +98,21 @@ def download_file(
     account: str | None = None,
     file_id: str = "",
     output_path: str | None = None,
+    overwrite: bool = False,
 ) -> dict:
     """Download a binary (non-Google-native) file to a local path.
 
     Writes to output_path, or to the system temp dir using the file's name when
-    omitted. Returns {path, bytes, name, mimeType}. Google Docs/Sheets/Slides
-    must use export_file instead.
+    omitted (a clash there gets a new name). An existing output_path is not
+    replaced unless overwrite=True.
+    Returns {path, bytes, name, mimeType}. Google Docs/Sheets/Slides must use
+    export_file instead.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.download_file(file_id, output_path=output_path))
+    data = run_tool(lambda: api.download_file(
+        file_id,
+        output_path=safe_path(output_path, write=True, overwrite=overwrite) if output_path else None,
+    ))
     return ok(resolved, data)
 
 
@@ -115,15 +122,20 @@ def export_file(
     file_id: str = "",
     fmt: str = "pdf",
     output_path: str | None = None,
+    overwrite: bool = False,
 ) -> dict:
     """Export a Google-native file (Doc/Sheet/Slide) to md/pdf/txt/csv/xlsx on disk.
 
     fmt: markdown/md, pdf, txt/plain (Docs); csv/xlsx (Sheets); pdf (Slides).
-    Writes to output_path, or to the system temp dir when omitted.
+    Writes to output_path, or to the system temp dir when omitted (a clash there
+    gets a new name). An existing output_path is not replaced unless overwrite=True.
     Returns {path, bytes, name, sourceMimeType, exportMimeType}.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.export_file(file_id, fmt, output_path=output_path))
+    data = run_tool(lambda: api.export_file(
+        file_id, fmt,
+        output_path=safe_path(output_path, write=True, overwrite=overwrite) if output_path else None,
+    ))
     return ok(resolved, data)
 
 
@@ -215,12 +227,12 @@ def upload_file(
     """
     api, resolved = _api(account)
     data = run_tool(
-        lambda: api.upload_file(local_path, name=name, parent_id=parent_id, mime_type=mime_type)
+        lambda: api.upload_file(safe_path(local_path), name=name, parent_id=parent_id, mime_type=mime_type)
     )
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, destructive=True)
 def update_file_content(
     account: str | None = None,
     file_id: str = "",
@@ -234,7 +246,7 @@ def update_file_content(
     """
     api, resolved = _api(account)
     data = run_tool(
-        lambda: api.update_file_content(file_id, local_path, mime_type=mime_type)
+        lambda: api.update_file_content(file_id, safe_path(local_path), mime_type=mime_type)
     )
     return ok(resolved, data)
 
@@ -284,7 +296,7 @@ def copy_file(
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, destructive=True, open_world=True)
 def share_file(
     account: str | None = None,
     file_id: str = "",
@@ -304,7 +316,7 @@ def share_file(
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, destructive=True)
 def unshare_file(
     account: str | None = None,
     file_id: str = "",

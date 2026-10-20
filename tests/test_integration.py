@@ -276,7 +276,7 @@ async def test_annotations_mutating_not_destructive():
     from google_workspace_mcp.sheets import server as s
 
     cases = [
-        (g, "send_message"),
+        (g, "create_draft"),
         (c, "create_event"),
         (s, "update_range"),
         (d, "append_text"),
@@ -382,3 +382,21 @@ async def test_tool_errors_keep_actionable_message(store_env):
         await mcp.call_tool("needs_login", {})
     with pytest.raises(ToolError, match="range must be A1 notation"):
         await mcp.call_tool("bad_arg", {})
+
+@pytest.mark.anyio
+async def test_outward_and_overwrite_tools_are_destructive():
+    from google_workspace_mcp.docs import server as d
+    from google_workspace_mcp.drive import server as dr
+    from google_workspace_mcp.gmail import server as g
+    from google_workspace_mcp.sheets import server as s
+
+    cases = [
+        (g, "send_message", True), (g, "reply_to_message", True), (g, "forward_message", True),
+        (g, "send_draft", True), (g, "create_filter", True), (g, "block_sender", False),
+        (dr, "share_file", True), (dr, "unshare_file", False), (dr, "update_file_content", False),
+        (d, "batch_update", False), (s, "batch_update", False),
+    ]
+    for mod, name, open_world in cases:
+        ann = _tool_by_name(await mod.mcp.list_tools(), name).annotations
+        assert ann.destructive_hint is True, name
+        assert ann.open_world_hint is open_world, name
