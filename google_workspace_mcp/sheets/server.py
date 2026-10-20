@@ -64,7 +64,7 @@ def read_range(account: str | None = None, *, spreadsheet_id: str, range: str, v
 
 
 @register(mcp, core=True)
-def batch_read(account: str | None = None, *, spreadsheet_id: str, ranges: list[str] | None = None, value_render_option: str = "FORMATTED_VALUE", max_chars: int | None = None) -> dict:
+def batch_read(account: str | None = None, *, spreadsheet_id: str, ranges: list[str], value_render_option: str = "FORMATTED_VALUE", max_chars: int | None = None) -> dict:
     """Read cell values from multiple ranges in one request (A1 notation).
 
     All ranges share one max_chars budget of JSON (default 100000). Any range
@@ -72,7 +72,7 @@ def batch_read(account: str | None = None, *, spreadsheet_id: str, ranges: list[
     returned); read the rest with narrower ranges.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.batch_read(spreadsheet_id, ranges or [], value_render_option))
+    data = run_tool(lambda: api.batch_read(spreadsheet_id, ranges, value_render_option))
     budget = DEFAULT_MAX_CHARS if max_chars is None else max_chars
     if budget < 1:
         raise InvalidArgumentError("max_chars must be at least 1")
@@ -102,26 +102,26 @@ def create_spreadsheet(account: str | None = None, *, title: str) -> dict:
 
 
 @register(mcp, mutating=True, core=True)
-def update_range(account: str | None = None, *, spreadsheet_id: str, range: str, values: list[list] | None = None, value_input_option: str = "USER_ENTERED") -> dict:
+def update_range(account: str | None = None, *, spreadsheet_id: str, range: str, values: list[list], value_input_option: str = "USER_ENTERED") -> dict:
     """Write a 2D array of values to a range (A1 notation). Overwrites existing cells."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.update_range(spreadsheet_id, range, values or [], value_input_option))
+    data = run_tool(lambda: api.update_range(spreadsheet_id, range, values, value_input_option))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True, core=True)
-def batch_update_values(account: str | None = None, *, spreadsheet_id: str, data: list[dict] | None = None, value_input_option: str = "USER_ENTERED") -> dict:
+def batch_update_values(account: str | None = None, *, spreadsheet_id: str, data: list[dict], value_input_option: str = "USER_ENTERED") -> dict:
     """Write values to multiple ranges in one request. Each item in data must have 'range' and 'values' keys."""
     api, resolved = _api(account)
-    result = run_tool(lambda: api.batch_update_values(spreadsheet_id, data or [], value_input_option))
+    result = run_tool(lambda: api.batch_update_values(spreadsheet_id, data, value_input_option))
     return ok(resolved, result)
 
 
 @register(mcp, mutating=True, core=True)
-def append_rows(account: str | None = None, *, spreadsheet_id: str, range: str, values: list[list] | None = None, value_input_option: str = "USER_ENTERED") -> dict:
+def append_rows(account: str | None = None, *, spreadsheet_id: str, range: str, values: list[list], value_input_option: str = "USER_ENTERED") -> dict:
     """Append rows after the last row with data in the given range (A1 notation)."""
     api, resolved = _api(account)
-    result = run_tool(lambda: api.append_rows(spreadsheet_id, range, values or [], value_input_option))
+    result = run_tool(lambda: api.append_rows(spreadsheet_id, range, values, value_input_option))
     return ok(resolved, result)
 
 
@@ -394,10 +394,10 @@ def optimize_layout(account: str | None = None, *, spreadsheet_id: str, range: s
 
 
 @register(mcp, mutating=True, core=True)
-def write_table(account: str | None = None, *, spreadsheet_id: str, anchor: str, values: list[list] | None = None, style: str = "native", name: str | None = None, header_color: str = "#355468", first_band_color: str = "#FFFFFF", second_band_color: str = "#F3F3F3", max_column_width: int = 320) -> dict:
+def write_table(account: str | None = None, *, spreadsheet_id: str, anchor: str, values: list[list], style: str = "native", name: str | None = None, header_color: str = "#355468", first_band_color: str = "#FFFFFF", second_band_color: str = "#F3F3F3", max_column_width: int = 320) -> dict:
     """Write a 2D array (first row = headers) at an anchor cell (e.g. 'Sheet1!A1') and make it readable in one shot: native Sheets table (style='native'), alternating-color banding (style='banded'), or values only (style='plain'), plus content-aware column widths and wrapping. Prefer this over update_range for tabular data. Overwrites cells in the target range. If a native table already overlaps the range, use style='banded' or update_table instead."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.write_table(spreadsheet_id, anchor, values or [], style, name, header_color, first_band_color, second_band_color, max_column_width))
+    data = run_tool(lambda: api.write_table(spreadsheet_id, anchor, values, style, name, header_color, first_band_color, second_band_color, max_column_width))
     return ok(resolved, data)
 
 
@@ -410,10 +410,10 @@ def read_formulas(account: str | None = None, *, spreadsheet_id: str, range: str
 
 
 @register(mcp, mutating=True)
-def write_formulas(account: str | None = None, *, spreadsheet_id: str, range: str, formulas: list[list] | None = None) -> dict:
+def write_formulas(account: str | None = None, *, spreadsheet_id: str, range: str, formulas: list[list]) -> dict:
     """Write formula strings to a range (A1 notation). Pass 2D array with '=' prefixes, e.g. [['=SUM(A2:A10)', '=A2*B2']]."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.write_formulas(spreadsheet_id, range, formulas or []))
+    data = run_tool(lambda: api.write_formulas(spreadsheet_id, range, formulas))
     return ok(resolved, data)
 
 
@@ -426,7 +426,7 @@ def add_chart(account: str | None = None, *, spreadsheet_id: str, range: str, ch
 
 
 @register(mcp, mutating=True, destructive=True)
-def batch_update(account: str | None = None, *, spreadsheet_id: str, requests: list[dict] | str | None = None) -> dict:
+def batch_update(account: str | None = None, *, spreadsheet_id: str, requests: list[dict] | str) -> dict:
     """Execute raw Sheets batchUpdate requests. Pass a list of request dicts or a JSON string."""
     api, resolved = _api(account)
 

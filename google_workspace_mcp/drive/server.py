@@ -459,7 +459,7 @@ def batch_move_files(
 
 
 @register(mcp, mutating=True)
-def batch_create_folders(account: str | None = None, items: list | None = None) -> dict:
+def batch_create_folders(account: str | None = None, *, items: list) -> dict:
     """Create many folders in one call.
 
     items=[{name, parent_id?}, ...]. Returns each created folder's id so you can
@@ -467,31 +467,31 @@ def batch_create_folders(account: str | None = None, items: list | None = None) 
     If every item fails, ok is false; per-item errors still live in data.results.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.batch_create_folders(items or []))
+    data = run_tool(lambda: api.batch_create_folders(items))
     return _batch_envelope(resolved, data)
 
 
 @register(mcp, mutating=True)
-def batch_trash_files(account: str | None = None, file_ids: list | None = None) -> dict:
+def batch_trash_files(account: str | None = None, *, file_ids: list) -> dict:
     """Trash many files in one call (reversible). file_ids=[...].
 
     Per-file errors are reported individually; returns {total, succeeded, failed, results}.
     If every item fails, ok is false; per-item errors still live in data.results.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.batch_trash_files(file_ids or []))
+    data = run_tool(lambda: api.batch_trash_files(file_ids))
     return _batch_envelope(resolved, data)
 
 
 @register(mcp, mutating=True, destructive=True)
-def batch_delete_files(account: str | None = None, file_ids: list | None = None) -> dict:
+def batch_delete_files(account: str | None = None, *, file_ids: list) -> dict:
     """Permanently delete many files in one call. file_ids=[...].
 
     Per-file errors are reported individually; returns {total, succeeded, failed, results}.
     If every item fails, ok is false; per-item errors still live in data.results.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.batch_delete_files(file_ids or []))
+    data = run_tool(lambda: api.batch_delete_files(file_ids))
     return _batch_envelope(resolved, data)
 
 

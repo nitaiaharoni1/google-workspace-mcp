@@ -398,9 +398,13 @@ async def test_required_ids_are_required_in_schema():
         (s, "delete_sheet", {"spreadsheet_id", "sheet_id"}, None),
         (s, "find_replace", {"spreadsheet_id", "find"}, "replacement"),
         (d, "read_document", {"document_id"}, "max_chars"),
-        (d, "delete_range", {"document_id"}, None),
+        (d, "delete_range", {"document_id", "start_index", "end_index"}, "segment_id"),
         (dr, "get_file", {"file_id"}, None),
         (dr, "move_file", {"file_id", "new_parent_id"}, None),
+        (dr, "batch_trash_files", {"file_ids"}, None),
+        (g, "create_filter", {"criteria", "action"}, None),
+        (c, "add_attendees", {"event_id", "attendee_emails"}, "send_updates"),
+        (s, "update_range", {"spreadsheet_id", "range", "values"}, "value_input_option"),
     ]
     for mod, name, required, optional in cases:
         schema = _tool_by_name(await mod.mcp.list_tools(), name).input_schema

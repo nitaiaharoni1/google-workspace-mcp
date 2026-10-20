@@ -272,8 +272,9 @@ def create_event(
 @register(mcp, mutating=True)
 def create_out_of_office(
     account: str | None = None,
-    start_time: str | None = None,
-    end_time: str | None = None,
+    *,
+    start_time: str,
+    end_time: str,
     timezone: str = "UTC",
     calendar_id: str = "primary",
     summary: str | None = None,
@@ -300,8 +301,9 @@ def create_out_of_office(
 @register(mcp, mutating=True)
 def create_focus_time(
     account: str | None = None,
-    start_time: str | None = None,
-    end_time: str | None = None,
+    *,
+    start_time: str,
+    end_time: str,
     timezone: str = "UTC",
     calendar_id: str = "primary",
     summary: str | None = None,
@@ -403,17 +405,16 @@ def add_attendees(
     account: str | None = None,
     *,
     event_id: str,
-    attendee_emails: list[str] | None = None,
+    attendee_emails: list[str],
     calendar_id: str = "primary",
     send_updates: str = "all",
 ) -> dict:
     """Add attendees to an existing event."""
     api, resolved = _api(account)
-    emails = attendee_emails or []
     data = run_tool(
         lambda: api.add_attendees(
             event_id=event_id,
-            attendee_emails=emails,
+            attendee_emails=attendee_emails,
             calendar_id=calendar_id,
             send_updates=send_updates,
         )
@@ -426,17 +427,16 @@ def remove_attendees(
     account: str | None = None,
     *,
     event_id: str,
-    attendee_emails: list[str] | None = None,
+    attendee_emails: list[str],
     calendar_id: str = "primary",
     send_updates: str = "all",
 ) -> dict:
     """Remove attendees from an existing event."""
     api, resolved = _api(account)
-    emails = attendee_emails or []
     data = run_tool(
         lambda: api.remove_attendees(
             event_id=event_id,
-            attendee_emails=emails,
+            attendee_emails=attendee_emails,
             calendar_id=calendar_id,
             send_updates=send_updates,
         )

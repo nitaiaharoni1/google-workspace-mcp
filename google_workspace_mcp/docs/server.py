@@ -152,7 +152,7 @@ def replace_all_text(account: str | None = None, *, document_id: str, find: str,
 
 # --- format / structure ---
 @register(mcp, mutating=True, core=True)
-def format_text(account: str | None = None, *, document_id: str, start_index: int = 1, end_index: int = 1, bold: bool | None = None, italic: bool | None = None, underline: bool | None = None, strikethrough: bool | None = None, font_size: float | None = None, font_family: str | None = None, link_url: str | None = None, foreground_color: str | None = None, background_color: str | None = None, segment_id: str | None = None) -> dict:
+def format_text(account: str | None = None, *, document_id: str, start_index: int, end_index: int, bold: bool | None = None, italic: bool | None = None, underline: bool | None = None, strikethrough: bool | None = None, font_size: float | None = None, font_family: str | None = None, link_url: str | None = None, foreground_color: str | None = None, background_color: str | None = None, segment_id: str | None = None) -> dict:
     """Style a character range (bold/italic/underline/strikethrough, font size/family in PT, link URL, hex foreground/background colors). Use segment_id for header/footer text."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.format_text(document_id, start_index, end_index, bold, italic, underline, strikethrough, font_size, font_family, link_url, foreground_color, background_color, segment_id))
@@ -160,7 +160,7 @@ def format_text(account: str | None = None, *, document_id: str, start_index: in
 
 
 @register(mcp, mutating=True)
-def set_paragraph_style(account: str | None = None, *, document_id: str, start_index: int = 1, end_index: int = 1, named_style: str = "NORMAL_TEXT") -> dict:
+def set_paragraph_style(account: str | None = None, *, document_id: str, start_index: int, end_index: int, named_style: str = "NORMAL_TEXT") -> dict:
     """Apply a paragraph named style (NORMAL_TEXT, TITLE, SUBTITLE, HEADING_1..HEADING_6) to a range."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.set_paragraph_style(document_id, start_index, end_index, named_style))
@@ -168,7 +168,7 @@ def set_paragraph_style(account: str | None = None, *, document_id: str, start_i
 
 
 @register(mcp, mutating=True)
-def update_paragraph_style(account: str | None = None, *, document_id: str, start_index: int = 1, end_index: int = 1, named_style_type: str | None = None, alignment: str | None = None, indent_start_pt: float | None = None, indent_end_pt: float | None = None, space_above_pt: float | None = None, space_below_pt: float | None = None, line_spacing: float | None = None, line_spacing_mode: str | None = None, segment_id: str | None = None) -> dict:
+def update_paragraph_style(account: str | None = None, *, document_id: str, start_index: int, end_index: int, named_style_type: str | None = None, alignment: str | None = None, indent_start_pt: float | None = None, indent_end_pt: float | None = None, space_above_pt: float | None = None, space_below_pt: float | None = None, line_spacing: float | None = None, line_spacing_mode: str | None = None, segment_id: str | None = None) -> dict:
     """Apply paragraph formatting: alignment, indents/spacing in PT, line_spacing (100=normal), line_spacing_mode (AT_LEAST/EXACTLY/MULTIPLE), named style type."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.update_paragraph_style(document_id, start_index, end_index, named_style_type, alignment, indent_start_pt, indent_end_pt, space_above_pt, space_below_pt, line_spacing, line_spacing_mode, segment_id))
@@ -256,7 +256,7 @@ def insert_page_break(account: str | None = None, *, document_id: str, index: in
 
 
 @register(mcp, mutating=True)
-def insert_bullets(account: str | None = None, *, document_id: str, start_index: int = 1, end_index: int = 1, bullet_preset: str = "BULLET_DISC_CIRCLE_SQUARE", segment_id: str | None = None) -> dict:
+def insert_bullets(account: str | None = None, *, document_id: str, start_index: int, end_index: int, bullet_preset: str = "BULLET_DISC_CIRCLE_SQUARE", segment_id: str | None = None) -> dict:
     """Turn the paragraphs in a range into a bulleted/numbered list (e.g. BULLET_DISC_CIRCLE_SQUARE, NUMBERED_DECIMAL_ALPHA_ROMAN)."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.insert_bullets(document_id, start_index, end_index, bullet_preset, segment_id))
@@ -264,7 +264,7 @@ def insert_bullets(account: str | None = None, *, document_id: str, start_index:
 
 
 @register(mcp, mutating=True)
-def insert_numbered_list(account: str | None = None, *, document_id: str, start_index: int = 1, end_index: int = 1, preset: str = "NUMBERED_DECIMAL_ALPHA_ROMAN", segment_id: str | None = None) -> dict:
+def insert_numbered_list(account: str | None = None, *, document_id: str, start_index: int, end_index: int, preset: str = "NUMBERED_DECIMAL_ALPHA_ROMAN", segment_id: str | None = None) -> dict:
     """Apply numbered list formatting. Presets: NUMBERED_DECIMAL_ALPHA_ROMAN, NUMBERED_DECIMAL_ALPHA_ROMAN_PARENS, NUMBERED_DECIMAL_NESTED, NUMBERED_UPPERALPHA_ALPHA_ROMAN, NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL, NUMBERED_ZERODECIMAL_ALPHA_ROMAN."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.insert_numbered_list(document_id, start_index, end_index, preset, segment_id))
@@ -272,15 +272,15 @@ def insert_numbered_list(account: str | None = None, *, document_id: str, start_
 
 
 @register(mcp, mutating=True)
-def populate_table(account: str | None = None, *, document_id: str, table_start_index: int = 1, rows: list[list[str]] | None = None, segment_id: str | None = None) -> dict:
+def populate_table(account: str | None = None, *, document_id: str, table_start_index: int, rows: list[list[str]], segment_id: str | None = None) -> dict:
     """Fill table cells with text. Use get_content_map to find table_start_index and dimensions."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.populate_table(document_id, table_start_index, rows or [], segment_id))
+    data = run_tool(lambda: api.populate_table(document_id, table_start_index, rows, segment_id))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True)
-def merge_table_cells(account: str | None = None, *, document_id: str, table_start_index: int = 1, row: int = 0, column: int = 0, row_span: int = 1, column_span: int = 1, segment_id: str | None = None) -> dict:
+def merge_table_cells(account: str | None = None, *, document_id: str, table_start_index: int, row: int = 0, column: int = 0, row_span: int = 1, column_span: int = 1, segment_id: str | None = None) -> dict:
     """Merge a rectangular range of table cells."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.merge_table_cells(document_id, table_start_index, row, column, row_span, column_span, segment_id))
@@ -288,7 +288,7 @@ def merge_table_cells(account: str | None = None, *, document_id: str, table_sta
 
 
 @register(mcp, mutating=True)
-def format_table_cells(account: str | None = None, *, document_id: str, table_start_index: int = 1, row: int = 0, column: int = 0, row_span: int = 1, column_span: int = 1, background_color: str | None = None, border_color: str | None = None, border_width_pt: float | None = None, segment_id: str | None = None) -> dict:
+def format_table_cells(account: str | None = None, *, document_id: str, table_start_index: int, row: int = 0, column: int = 0, row_span: int = 1, column_span: int = 1, background_color: str | None = None, border_color: str | None = None, border_width_pt: float | None = None, segment_id: str | None = None) -> dict:
     """Style table cells: hex background_color, border_color, border_width_pt."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.format_table_cells(document_id, table_start_index, row, column, row_span, column_span, background_color, border_color, border_width_pt, segment_id))
@@ -307,7 +307,7 @@ def insert_page_number(account: str | None = None, *, document_id: str, footer_i
 
 
 @register(mcp, mutating=True, destructive=True)
-def batch_update(account: str | None = None, *, document_id: str, requests: list[dict] | str | None = None) -> dict:
+def batch_update(account: str | None = None, *, document_id: str, requests: list[dict] | str) -> dict:
     """Execute raw Docs batchUpdate requests. Pass a list of request dicts or a JSON string."""
     api, resolved = _api(account)
 
@@ -333,7 +333,7 @@ def insert_sheets_chart(account: str | None = None, *, document_id: str, spreads
 
 
 @register(mcp, mutating=True)
-def remove_bullets(account: str | None = None, *, document_id: str, start_index: int = 1, end_index: int = 1, segment_id: str | None = None) -> dict:
+def remove_bullets(account: str | None = None, *, document_id: str, start_index: int, end_index: int, segment_id: str | None = None) -> dict:
     """Remove bullets/numbering from paragraphs in a range."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.remove_bullets(document_id, start_index, end_index, segment_id))
@@ -341,7 +341,7 @@ def remove_bullets(account: str | None = None, *, document_id: str, start_index:
 
 
 @register(mcp, mutating=True, destructive=True)
-def delete_range(account: str | None = None, *, document_id: str, start_index: int = 1, end_index: int = 1, segment_id: str | None = None) -> dict:
+def delete_range(account: str | None = None, *, document_id: str, start_index: int, end_index: int, segment_id: str | None = None) -> dict:
     """Delete content in the given character index range (body or header/footer via segment_id)."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.delete_range(document_id, start_index, end_index, segment_id))

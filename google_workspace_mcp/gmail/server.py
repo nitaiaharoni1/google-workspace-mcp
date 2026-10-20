@@ -587,12 +587,13 @@ def update_label(
 @register(mcp, mutating=True, destructive=True, open_world=True)
 def create_filter(
     account: str | None = None,
-    criteria: dict | None = None,
-    action: dict | None = None,
+    *,
+    criteria: dict,
+    action: dict,
 ) -> dict:
     """Create a Gmail filter with given criteria (from, to, subject) and action (addLabelIds, etc.)."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.create_filter(criteria or {}, action or {}))
+    data = run_tool(lambda: api.create_filter(criteria, action))
     return ok(resolved, data)
 
 
@@ -607,13 +608,14 @@ def block_sender(account: str | None = None, *, email: str) -> dict:
 @register(mcp, mutating=True)
 def batch_modify_labels(
     account: str | None = None,
-    message_ids: list[str] | None = None,
+    *,
+    message_ids: list[str],
     add_label_ids: list[str] | None = None,
     remove_label_ids: list[str] | None = None,
 ) -> dict:
     """Add or remove labels on multiple messages in a single batch operation."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.batch_modify_messages(message_ids or [], add_label_ids=add_label_ids, remove_label_ids=remove_label_ids))
+    data = run_tool(lambda: api.batch_modify_messages(message_ids, add_label_ids=add_label_ids, remove_label_ids=remove_label_ids))
     return ok(resolved, data)
 
 
@@ -672,33 +674,36 @@ def delete_filter(account: str | None = None, *, filter_id: str) -> dict:
 @register(mcp, mutating=True, destructive=True)
 def batch_trash_messages(
     account: str | None = None,
-    message_ids: list[str] | None = None,
+    *,
+    message_ids: list[str],
 ) -> dict:
     """Move multiple messages to trash in a single batch operation."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.batch_trash_messages(message_ids or []))
+    data = run_tool(lambda: api.batch_trash_messages(message_ids))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True, destructive=True)
 def batch_untrash_messages(
     account: str | None = None,
-    message_ids: list[str] | None = None,
+    *,
+    message_ids: list[str],
 ) -> dict:
     """Restore multiple messages from trash in a single batch operation."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.batch_untrash_messages(message_ids or []))
+    data = run_tool(lambda: api.batch_untrash_messages(message_ids))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True, destructive=True)
 def batch_delete_messages(
     account: str | None = None,
-    message_ids: list[str] | None = None,
+    *,
+    message_ids: list[str],
 ) -> dict:
     """Permanently delete multiple messages in a single batch operation (cannot be undone)."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.batch_delete_messages(message_ids or []))
+    data = run_tool(lambda: api.batch_delete_messages(message_ids))
     return ok(resolved, data)
 
 
