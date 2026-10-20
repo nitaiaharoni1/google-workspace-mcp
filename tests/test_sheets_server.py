@@ -1861,8 +1861,8 @@ async def test_range_rule_tools_flags_and_required_params():
     for name in ("delete_conditional_format", "unprotect_range", "delete_named_range"):
         assert "destructive" in (tools[name].description or "").lower(), name
     for name in ("list_conditional_formats", "list_protected_ranges", "list_named_ranges"):
-        assert tools[name].annotations.readOnlyHint is True, name
+        assert tools[name].annotations.read_only_hint is True, name
     for name in ("add_conditional_format", "protect_range", "add_named_range", "update_named_range"):
-        assert tools[name].annotations.readOnlyHint is False, name
-        assert tools[name].annotations.destructiveHint is False, name
-    assert set(tools["protect_range"].inputSchema["required"]) == {"spreadsheet_id", "range"}
+        assert tools[name].annotations.read_only_hint is False, name
+        assert tools[name].annotations.destructive_hint is False, name
+    assert set(tools["protect_range"].input_schema["required"]) == {"spreadsheet_id", "range"}

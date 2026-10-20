@@ -236,8 +236,8 @@ async def test_contact_search_on_gmail_and_calendar_only():
 
     for mod in (g, c):
         tool = _tool_by_name(await mod.mcp.list_tools(), "search_contacts")
-        assert tool.annotations.readOnlyHint is True
-        assert tool.inputSchema["required"] == ["query"]
+        assert tool.annotations.read_only_hint is True
+        assert tool.input_schema["required"] == ["query"]
     for mod in (s, d, dr):
         names = {t.name for t in await mod.mcp.list_tools()}
         assert "search_contacts" not in names
