@@ -11,6 +11,8 @@ import tempfile
 import google_auth_core as core
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
+from ..core.paths import free_path, safe_path
+
 GOOGLE_APPS_PREFIX = "application/vnd.google-apps."
 FOLDER_MIME = "application/vnd.google-apps.folder"
 DOCUMENT_MIME = "application/vnd.google-apps.document"
@@ -89,7 +91,8 @@ def _default_output_path(name: str, suffix: str = "") -> str:
     stem, ext = os.path.splitext(_sanitize_filename(name))
     if suffix and not ext:
         ext = suffix if suffix.startswith(".") else f".{suffix}"
-    return os.path.join(out_dir, f"{stem}{ext}")
+    # Never replace an earlier download; still apply the store/root guard.
+    return safe_path(free_path(os.path.join(out_dir, f"{stem}{ext}")), write=True)
 
 
 def _resolve_export_mime(source_mime: str, fmt: str) -> str:

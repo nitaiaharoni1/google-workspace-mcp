@@ -1577,3 +1577,4 @@ class TestSheetsChartExport:
         req = urlopen.call_args[0][0]
         assert req.get_header("Authorization") == "Bearer tok"
         assert "sid" in req.full_url and "oid=42" in req.full_url
+        assert urlopen.call_args.kwargs["timeout"] > 0

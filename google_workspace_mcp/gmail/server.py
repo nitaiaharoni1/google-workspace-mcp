@@ -1,7 +1,12 @@
 """Gmail MCP server: read, search, send, label, and manage messages."""
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
+
 from ..core import build_server, get_api, ok, register, run_tool
+from ..core.paths import free_path, safe_dir, safe_path, safe_paths
 from .changes_api import GmailChangesAPI
 
 mcp = build_server(
@@ -136,16 +141,38 @@ def download_attachment(
     message_id: str = "",
     output_dir: str | None = None,
     attachment_id: str | None = None,
+    overwrite: bool = False,
 ) -> dict:
     """Save a message's attachment(s) to local disk and return their paths.
 
     Reads from Gmail and writes the files to output_dir (defaults to the system
     temp dir, created if needed) using each attachment's own filename. Pass
-    attachment_id to save only that one. Returns a list of
-    {"filename", "path", "mime_type", "size"} dicts.
+    attachment_id to save only that one. Existing files in output_dir are not
+    replaced unless overwrite=True; in the temp dir a clash gets a new name. Returns a list of {"filename", "path", "mime_type", "size"} dicts.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.download_attachment(message_id, output_dir=output_dir, attachment_id=attachment_id))
+
+    def fetch():
+        out_dir = safe_dir(output_dir) if output_dir else tempfile.gettempdir()
+        # Download into a private dir first so a name clash is caught before
+        # any existing file is touched.
+        with tempfile.TemporaryDirectory() as staging:
+            fetched = api.download_attachment(message_id, output_dir=staging, attachment_id=attachment_id)
+            # Same-named attachments share one staged file (last one wins).
+            files = list({f["path"]: f for f in fetched}.values())
+            dests = []
+            for f in files:
+                dest = os.path.join(out_dir, f["filename"])
+                if not output_dir and not overwrite:
+                    dest = free_path(dest)
+                dests.append(safe_path(dest, write=True, overwrite=overwrite))
+            os.makedirs(out_dir, exist_ok=True)
+            for f, dest in zip(files, dests):
+                shutil.move(f["path"], dest)
+                f["path"] = dest
+        return files
+
+    data = run_tool(fetch)
     return ok(resolved, data)
 
 
@@ -248,7 +275,7 @@ def list_changes(
 # WRITE tools (mutating=True)
 # ---------------------------------------------------------------------------
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, destructive=True, open_world=True)
 def send_message(
     account: str | None = None,
     to: str = "",
@@ -266,11 +293,11 @@ def send_message(
     formatting). A plain-text fallback is generated automatically.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.send_message(to=to, subject=subject, body=body, cc=cc, attachments=attachments, html=html))
+    data = run_tool(lambda: api.send_message(to=to, subject=subject, body=body, cc=cc, attachments=safe_paths(attachments), html=html))
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, destructive=True, open_world=True)
 def reply_to_message(
     account: str | None = None,
     message_id: str = "",
@@ -284,7 +311,7 @@ def reply_to_message(
     attachments: list of LOCAL file paths to attach (read from disk server-side).
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.reply_to_message(message_id, body=body, reply_all=reply_all, additional_cc=additional_cc, attachments=attachments))
+    data = run_tool(lambda: api.reply_to_message(message_id, body=body, reply_all=reply_all, additional_cc=additional_cc, attachments=safe_paths(attachments)))
     return ok(resolved, data)
 
 
@@ -305,11 +332,11 @@ def draft_reply(
     attachments: list of LOCAL file paths to attach (read from disk server-side).
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.draft_reply(message_id, body=body, reply_all=reply_all, additional_cc=additional_cc, attachments=attachments))
+    data = run_tool(lambda: api.draft_reply(message_id, body=body, reply_all=reply_all, additional_cc=additional_cc, attachments=safe_paths(attachments)))
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, destructive=True, open_world=True)
 def forward_message(
     account: str | None = None,
     message_id: str = "",
@@ -322,7 +349,7 @@ def forward_message(
     attachments: list of LOCAL file paths to attach (read from disk server-side).
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.forward_message(message_id, to=to, body=body, attachments=attachments))
+    data = run_tool(lambda: api.forward_message(message_id, to=to, body=body, attachments=safe_paths(attachments)))
     return ok(resolved, data)
 
 
@@ -343,7 +370,7 @@ def create_draft(
     formatting). A plain-text fallback is generated automatically.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.create_draft(to=to, subject=subject, body=body, cc=cc, attachments=attachments, html=html))
+    data = run_tool(lambda: api.create_draft(to=to, subject=subject, body=body, cc=cc, attachments=safe_paths(attachments), html=html))
     return ok(resolved, data)
 
 
@@ -368,11 +395,11 @@ def update_draft(
     formatting). A plain-text fallback is generated automatically.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.update_draft(draft_id, to=to, subject=subject, body=body, cc=cc, attachments=attachments, html=html))
+    data = run_tool(lambda: api.update_draft(draft_id, to=to, subject=subject, body=body, cc=cc, attachments=safe_paths(attachments), html=html))
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, destructive=True, open_world=True)
 def send_draft(account: str | None = None, draft_id: str = "") -> dict:
     """Send an existing draft, completing the draft -> review -> send loop.
 
@@ -472,7 +499,7 @@ def update_label(
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, destructive=True, open_world=True)
 def create_filter(
     account: str | None = None,
     criteria: dict | None = None,
@@ -484,7 +511,7 @@ def create_filter(
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, destructive=True)
 def block_sender(account: str | None = None, email: str = "") -> dict:
     """Block a sender by creating a filter that marks their emails as spam."""
     api, resolved = _api(account)

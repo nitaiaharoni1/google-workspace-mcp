@@ -558,6 +558,11 @@ def test_default_output_path_uses_tempdir(monkeypatch):
     out = api.download_file("B1")
     assert out["path"].startswith(tempfile.gettempdir())
     assert os.path.isfile(out["path"])
+    # A second default download picks a new name instead of replacing the first.
+    again = api.download_file("B1")
+    assert again["path"] != out["path"] and os.path.isfile(again["path"])
+    os.remove(out["path"])
+    os.remove(again["path"])
 
 
 def test_export_formats_cover_spec_types():
@@ -884,3 +889,33 @@ async def test_delete_file_marked_destructive():
     tools = {t.name: t for t in await server.mcp.list_tools()}
     desc = (tools["delete_file"].description or "").lower()
     assert "destructive" in desc
+
+
+@pytest.mark.anyio
+async def test_download_file_refuses_overwrite(monkeypatch, store_env, tmp_path):
+    fake = MagicMock(spec=DriveAPI)
+    fake.download_file.return_value = {"path": "p"}
+    monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
+    existing = tmp_path / "report.pdf"
+    existing.write_text("keep me")
+
+    with pytest.raises(Exception, match="overwrite=True"):
+        await server.mcp.call_tool("download_file", {"file_id": "B1", "output_path": str(existing)})
+    fake.download_file.assert_not_called()
+
+    await server.mcp.call_tool(
+        "download_file", {"file_id": "B1", "output_path": str(existing), "overwrite": True}
+    )
+    fake.download_file.assert_called_once_with("B1", output_path=str(existing))
+
+
+@pytest.mark.anyio
+async def test_upload_file_refuses_token_store(monkeypatch, store_env):
+    fake = MagicMock(spec=DriveAPI)
+    monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
+    secret = store_env / "credentials.json"
+    secret.write_text("{}")
+
+    with pytest.raises(Exception, match="token store"):
+        await server.mcp.call_tool("upload_file", {"local_path": str(secret)})
+    fake.upload_file.assert_not_called()
