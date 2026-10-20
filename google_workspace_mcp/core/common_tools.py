@@ -9,8 +9,26 @@ from __future__ import annotations
 from typing import Optional
 
 import google_auth_core as core
+from google_auth_core.diagnostics import feature_login_fix
 
 from .runtime import register
+
+
+def _health(account: str) -> dict:
+    """Token health plus any features (e.g. contacts) the login never granted.
+
+    check_token_health calls an older token valid because everything else still
+    works, so without this the agent can't tell contact search needs a new login.
+    """
+    health = core.check_token_health(account, "unified", core.ALL_SCOPES)
+    missing = core.token_missing_features(account)
+    if missing:
+        health = {
+            **health,
+            "missing_features": sorted(missing),
+            "fix": feature_login_fix(account, missing),
+        }
+    return health
 
 
 def register_common_tools(mcp, service_name: Optional[str] = None) -> None:
@@ -30,9 +48,7 @@ def register_common_tools(mcp, service_name: Optional[str] = None) -> None:
     def auth_status(account: Optional[str] = None) -> dict:
         """Report token health for one account, or all accounts if omitted."""
         accounts = [core.resolve_account(account)] if account else core.list_accounts()
-        statuses = {
-            a: core.check_token_health(a, "unified", core.ALL_SCOPES) for a in accounts
-        }
+        statuses = {a: _health(a) for a in accounts}
         return {"ok": True, "data": statuses}
 
     @register(mcp, core=True)
@@ -50,7 +66,7 @@ def register_common_tools(mcp, service_name: Optional[str] = None) -> None:
                 else core.get_default_account(service_name)
             )
             return {"ok": False, "account": resolved, "data": {"error": str(e)}}
-        health = core.check_token_health(resolved, "unified", core.ALL_SCOPES)
+        health = _health(resolved)
         return {
             "ok": True,
             "account": resolved,

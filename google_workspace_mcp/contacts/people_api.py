@@ -62,8 +62,7 @@ def _scope_error(account: str | None, scopes: list[str]) -> core.AuthError:
     return core.AuthError(
         "Contact search needs Google scopes this account's token does not have: "
         + ", ".join(scopes)
-        + ". Update google-auth-core to a version that requests them, then re-run: "
-        f"google-auth login {account or '<account>'}"
+        + f". Run: google-auth login {account or '<account>'} to grant contacts"
     )
 
 

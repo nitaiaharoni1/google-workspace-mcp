@@ -170,29 +170,29 @@ than blocking the protocol.
   "mcpServers": {
     "google-gmail": {
       "command": "uvx",
-      "args": ["--from", "google-workspace-suite-mcp==0.4.5", "gmail-mcp"]
+      "args": ["--from", "google-workspace-suite-mcp==0.5.0", "gmail-mcp"]
     },
     "google-calendar": {
       "command": "uvx",
-      "args": ["--from", "google-workspace-suite-mcp==0.4.5", "gcal-mcp"]
+      "args": ["--from", "google-workspace-suite-mcp==0.5.0", "gcal-mcp"]
     },
     "google-sheets": {
       "command": "uvx",
-      "args": ["--from", "google-workspace-suite-mcp==0.4.5", "gsheets-mcp"]
+      "args": ["--from", "google-workspace-suite-mcp==0.5.0", "gsheets-mcp"]
     },
     "google-docs": {
       "command": "uvx",
-      "args": ["--from", "google-workspace-suite-mcp==0.4.5", "gdocs-mcp"]
+      "args": ["--from", "google-workspace-suite-mcp==0.5.0", "gdocs-mcp"]
     },
     "google-drive": {
       "command": "uvx",
-      "args": ["--from", "google-workspace-suite-mcp==0.4.5", "gdrive-mcp"]
+      "args": ["--from", "google-workspace-suite-mcp==0.5.0", "gdrive-mcp"]
     }
   }
 }
 ```
 
-The `==0.4.5` pin means launches come from uv's cache after the first one:
+The `==0.5.0` pin means launches come from uv's cache after the first one:
 fast startup, works offline until the uv cache is cleaned, and a new release
 only runs once you choose it. To upgrade, bump the version in all five entries
 and restart Claude. If you'd rather get every release automatically, use this
