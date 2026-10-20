@@ -4,7 +4,6 @@ from __future__ import annotations
 import errno
 
 import anyio
-
 import google_auth_core as core
 import httplib2
 import pytest
