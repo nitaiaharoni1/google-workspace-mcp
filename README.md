@@ -91,9 +91,25 @@ form below so clients pick up new PyPI releases on each launch.
 
 You bring your **own** Google OAuth client. There is no shared client embedded
 in the package: Gmail and Drive are Google "restricted" scopes, so a shared
-published client would require Google's security assessment. With your own
-client used in "testing" mode (you add yourself as a test user) you skip
-verification entirely.
+published client would require Google's security assessment. Your own client
+used just by you skips that review.
+
+**Avoid "Testing" status.** Google expires refresh tokens after 7 days for an
+External app left in Testing, so you'd have to re-run `google-auth login` every
+week. Instead:
+
+- **Google Workspace account:** set the consent screen's user type to
+  **Internal**. No test users, no warning screen, tokens don't expire weekly.
+  This needs the Cloud project to belong to your Workspace organization, and
+  only accounts in that organization can sign in.
+- **Personal Gmail, or accounts from several domains:** use **External**, then
+  set publishing status to **In production** (no need to submit for
+  verification). Each `google-auth login` shows an "unverified app" warning:
+  click **Advanced**, then **Go to (your app name) (unsafe)**. Google caps
+  unverified apps at 100 users in total, which doesn't matter for personal use.
+
+Already in Testing? Switch to In production and run `google-auth login` again
+for each account to get a token that doesn't expire weekly.
 
 ### Manual setup (appendix)
 
@@ -102,8 +118,9 @@ verification entirely.
 - Create or select a project.
 - Enable the APIs you need: Gmail, Google Calendar, Google Sheets, Google Docs,
   Google Drive.
-- *APIs & Services → OAuth consent screen* → **External** → add your own Google
-  address under **Test users**.
+- *APIs & Services → OAuth consent screen*: pick **Internal** (Workspace
+  account) or **External** (personal Gmail). For External, click
+  **Publish app** so the status is **In production** (see above for why).
 - *APIs & Services → Credentials → Create credentials → OAuth client ID* →
   application type **Desktop app** → **Download JSON**.
 - Save that file as `~/.google/credentials.json`.
