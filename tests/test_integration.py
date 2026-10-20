@@ -379,6 +379,44 @@ async def test_annotations_read_vs_destructive():
 
 
 @pytest.mark.anyio
+async def test_required_ids_are_required_in_schema():
+    # Models omit params the schema calls optional; a missing ID must fail as
+    # a validation error, not as a Google 404 on an empty string.
+    from google_workspace_mcp.calendar import server as c
+    from google_workspace_mcp.docs import server as d
+    from google_workspace_mcp.drive import server as dr
+    from google_workspace_mcp.gmail import server as g
+    from google_workspace_mcp.sheets import server as s
+
+    cases = [
+        (g, "get_message", {"message_id"}, "format"),
+        (g, "reply_to_message", {"message_id", "body"}, "reply_all"),
+        (g, "search_contacts", {"query"}, "max_results"),
+        (c, "get_event", {"event_id"}, "calendar_id"),
+        (c, "delete_event", {"event_id"}, "calendar_id"),
+        (s, "read_range", {"spreadsheet_id", "range"}, "max_chars"),
+        (s, "delete_sheet", {"spreadsheet_id", "sheet_id"}, None),
+        (s, "find_replace", {"spreadsheet_id", "find"}, "replacement"),
+        (d, "read_document", {"document_id"}, "max_chars"),
+        (d, "delete_range", {"document_id", "start_index", "end_index"}, "segment_id"),
+        (dr, "get_file", {"file_id"}, None),
+        (dr, "move_file", {"file_id", "new_parent_id"}, None),
+        (dr, "batch_trash_files", {"file_ids"}, None),
+        (g, "create_filter", {"criteria", "action"}, None),
+        (c, "add_attendees", {"event_id", "attendee_emails"}, "send_updates"),
+        (c, "create_out_of_office", {"start_time", "end_time"}, "timezone"),
+        (d, "populate_table", {"document_id", "table_start_index", "rows"}, "segment_id"),
+        (s, "update_range", {"spreadsheet_id", "range", "values"}, "value_input_option"),
+    ]
+    for mod, name, required, optional in cases:
+        schema = _tool_by_name(await mod.mcp.list_tools(), name).input_schema
+        assert set(schema.get("required", [])) == required, name
+        assert "account" in schema["properties"], name
+        if optional:
+            assert optional in schema["properties"], name
+
+
+@pytest.mark.anyio
 async def test_annotations_mutating_not_destructive():
     from google_workspace_mcp.calendar import server as c
     from google_workspace_mcp.docs import server as d

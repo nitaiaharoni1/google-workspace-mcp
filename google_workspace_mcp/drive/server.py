@@ -86,7 +86,7 @@ def list_drives(
 
 
 @register(mcp, core=True)
-def get_file(account: str | None = None, file_id: str = "") -> dict:
+def get_file(account: str | None = None, *, file_id: str) -> dict:
     """Get full metadata for one file id."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.get_file(file_id))
@@ -96,7 +96,8 @@ def get_file(account: str | None = None, file_id: str = "") -> dict:
 @register(mcp, core=True)
 def download_file(
     account: str | None = None,
-    file_id: str = "",
+    *,
+    file_id: str,
     output_path: str | None = None,
     overwrite: bool = False,
 ) -> dict:
@@ -119,7 +120,8 @@ def download_file(
 @register(mcp, core=True)
 def export_file(
     account: str | None = None,
-    file_id: str = "",
+    *,
+    file_id: str,
     fmt: str = "pdf",
     output_path: str | None = None,
     overwrite: bool = False,
@@ -142,7 +144,8 @@ def export_file(
 @register(mcp, core=True)
 def read_file_text(
     account: str | None = None,
-    file_id: str = "",
+    *,
+    file_id: str,
     max_chars: int | None = None,
     offset: int = 0,
 ) -> dict:
@@ -165,7 +168,7 @@ def read_file_text(
 
 
 @register(mcp)
-def list_permissions(account: str | None = None, file_id: str = "") -> dict:
+def list_permissions(account: str | None = None, *, file_id: str) -> dict:
     """List permissions on a file."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.list_permissions(file_id))
@@ -175,7 +178,8 @@ def list_permissions(account: str | None = None, file_id: str = "") -> dict:
 @register(mcp)
 def list_comments(
     account: str | None = None,
-    file_id: str = "",
+    *,
+    file_id: str,
     include_deleted: bool = False,
     page_size: int = 20,
     page_token: str | None = None,
@@ -204,7 +208,8 @@ def get_changes_start_token(account: str | None = None) -> dict:
 @register(mcp)
 def list_changes(
     account: str | None = None,
-    page_token: str = "",
+    *,
+    page_token: str,
     page_size: int = 100,
     include_removed: bool = True,
     restrict_to_my_drive: bool = False,
@@ -228,7 +233,8 @@ def list_changes(
 @register(mcp, mutating=True, core=True)
 def upload_file(
     account: str | None = None,
-    local_path: str = "",
+    *,
+    local_path: str,
     name: str | None = None,
     parent_id: str | None = None,
     mime_type: str | None = None,
@@ -248,8 +254,9 @@ def upload_file(
 @register(mcp, mutating=True, destructive=True)
 def update_file_content(
     account: str | None = None,
-    file_id: str = "",
-    local_path: str = "",
+    *,
+    file_id: str,
+    local_path: str,
     mime_type: str | None = None,
 ) -> dict:
     """Replace an existing binary file's content from a local path.
@@ -267,7 +274,8 @@ def update_file_content(
 @register(mcp, mutating=True, core=True)
 def create_folder(
     account: str | None = None,
-    name: str = "",
+    *,
+    name: str,
     parent_id: str | None = None,
 ) -> dict:
     """Create a folder; optional parent_id to nest inside an existing folder."""
@@ -279,8 +287,9 @@ def create_folder(
 @register(mcp, mutating=True, core=True)
 def move_file(
     account: str | None = None,
-    file_id: str = "",
-    new_parent_id: str = "",
+    *,
+    file_id: str,
+    new_parent_id: str,
 ) -> dict:
     """Move a file to a new parent folder (reparents; removes old parents)."""
     api, resolved = _api(account)
@@ -289,7 +298,7 @@ def move_file(
 
 
 @register(mcp, mutating=True, core=True)
-def rename_file(account: str | None = None, file_id: str = "", name: str = "") -> dict:
+def rename_file(account: str | None = None, *, file_id: str, name: str) -> dict:
     """Rename a file."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.rename_file(file_id, name))
@@ -299,7 +308,8 @@ def rename_file(account: str | None = None, file_id: str = "", name: str = "") -
 @register(mcp, mutating=True, core=True)
 def copy_file(
     account: str | None = None,
-    file_id: str = "",
+    *,
+    file_id: str,
     name: str | None = None,
     parent_id: str | None = None,
 ) -> dict:
@@ -312,7 +322,8 @@ def copy_file(
 @register(mcp, mutating=True, destructive=True, open_world=True, core=True)
 def share_file(
     account: str | None = None,
-    file_id: str = "",
+    *,
+    file_id: str,
     role: str = "reader",
     email: str | None = None,
     anyone: bool = False,
@@ -332,7 +343,8 @@ def share_file(
 @register(mcp, mutating=True, destructive=True)
 def unshare_file(
     account: str | None = None,
-    file_id: str = "",
+    *,
+    file_id: str,
     email: str | None = None,
     permission_id: str | None = None,
     anyone: bool = False,
@@ -348,7 +360,7 @@ def unshare_file(
 
 
 @register(mcp, mutating=True, core=True)
-def trash_file(account: str | None = None, file_id: str = "") -> dict:
+def trash_file(account: str | None = None, *, file_id: str) -> dict:
     """Move a file to trash (reversible from the Drive UI)."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.trash_file(file_id))
@@ -356,7 +368,7 @@ def trash_file(account: str | None = None, file_id: str = "") -> dict:
 
 
 @register(mcp, mutating=True)
-def untrash_file(account: str | None = None, file_id: str = "") -> dict:
+def untrash_file(account: str | None = None, *, file_id: str) -> dict:
     """Restore a file from trash."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.untrash_file(file_id))
@@ -364,7 +376,7 @@ def untrash_file(account: str | None = None, file_id: str = "") -> dict:
 
 
 @register(mcp, mutating=True, destructive=True)
-def delete_file(account: str | None = None, file_id: str = "") -> dict:
+def delete_file(account: str | None = None, *, file_id: str) -> dict:
     """Permanently delete a file (cannot be undone)."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.delete_file(file_id))
@@ -374,8 +386,9 @@ def delete_file(account: str | None = None, file_id: str = "") -> dict:
 @register(mcp, mutating=True)
 def add_comment(
     account: str | None = None,
-    file_id: str = "",
-    content: str = "",
+    *,
+    file_id: str,
+    content: str,
     quoted_text: str | None = None,
 ) -> dict:
     """Add a comment on a file. Google will not highlight in the editor; optional quoted_text is remembered as the quoted snippet."""
@@ -387,8 +400,9 @@ def add_comment(
 @register(mcp, mutating=True)
 def reply_to_comment(
     account: str | None = None,
-    file_id: str = "",
-    comment_id: str = "",
+    *,
+    file_id: str,
+    comment_id: str,
     content: str | None = None,
     action: str | None = None,
 ) -> dict:
@@ -399,7 +413,7 @@ def reply_to_comment(
 
 
 @register(mcp, mutating=True, destructive=True)
-def delete_comment(account: str | None = None, file_id: str = "", comment_id: str = "") -> dict:
+def delete_comment(account: str | None = None, *, file_id: str, comment_id: str) -> dict:
     """Delete a Drive discussion thread."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.delete_comment(file_id, comment_id))
@@ -445,7 +459,7 @@ def batch_move_files(
 
 
 @register(mcp, mutating=True)
-def batch_create_folders(account: str | None = None, items: list | None = None) -> dict:
+def batch_create_folders(account: str | None = None, *, items: list) -> dict:
     """Create many folders in one call.
 
     items=[{name, parent_id?}, ...]. Returns each created folder's id so you can
@@ -453,31 +467,31 @@ def batch_create_folders(account: str | None = None, items: list | None = None) 
     If every item fails, ok is false; per-item errors still live in data.results.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.batch_create_folders(items or []))
+    data = run_tool(lambda: api.batch_create_folders(items))
     return _batch_envelope(resolved, data)
 
 
 @register(mcp, mutating=True)
-def batch_trash_files(account: str | None = None, file_ids: list | None = None) -> dict:
+def batch_trash_files(account: str | None = None, *, file_ids: list) -> dict:
     """Trash many files in one call (reversible). file_ids=[...].
 
     Per-file errors are reported individually; returns {total, succeeded, failed, results}.
     If every item fails, ok is false; per-item errors still live in data.results.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.batch_trash_files(file_ids or []))
+    data = run_tool(lambda: api.batch_trash_files(file_ids))
     return _batch_envelope(resolved, data)
 
 
 @register(mcp, mutating=True, destructive=True)
-def batch_delete_files(account: str | None = None, file_ids: list | None = None) -> dict:
+def batch_delete_files(account: str | None = None, *, file_ids: list) -> dict:
     """Permanently delete many files in one call. file_ids=[...].
 
     Per-file errors are reported individually; returns {total, succeeded, failed, results}.
     If every item fails, ok is false; per-item errors still live in data.results.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.batch_delete_files(file_ids or []))
+    data = run_tool(lambda: api.batch_delete_files(file_ids))
     return _batch_envelope(resolved, data)
 
 

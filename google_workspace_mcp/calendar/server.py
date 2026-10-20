@@ -84,7 +84,8 @@ def list_events(
 @register(mcp, core=True)
 def search_events(
     account: str | None = None,
-    query: str = "",
+    *,
+    query: str,
     calendar_id: str = "primary",
     max_results: int = 10,
     page_token: str | None = None,
@@ -105,7 +106,8 @@ def search_events(
 @register(mcp, core=True)
 def get_event(
     account: str | None = None,
-    event_id: str = "",
+    *,
+    event_id: str,
     calendar_id: str = "primary",
 ) -> dict:
     """Get a specific event by its ID."""
@@ -117,7 +119,8 @@ def get_event(
 @register(mcp)
 def get_recurring_event_instances(
     account: str | None = None,
-    event_id: str = "",
+    *,
+    event_id: str,
     calendar_id: str = "primary",
     max_results: int = 250,
     page_token: str | None = None,
@@ -138,8 +141,9 @@ def get_recurring_event_instances(
 @register(mcp, core=True)
 def freebusy_query(
     account: str | None = None,
-    time_min: str = "",
-    time_max: str = "",
+    *,
+    time_min: str,
+    time_max: str,
     calendar_ids: list[str] | None = None,
 ) -> dict:
     """Query free/busy information for one or more calendars (RFC3339 timestamps)."""
@@ -155,10 +159,11 @@ def freebusy_query(
 @register(mcp, core=True)
 def find_available_slots(
     account: str | None = None,
+    *,
     attendee_emails: list[str] | None = None,
     duration_minutes: int = 60,
-    time_min: str = "",
-    time_max: str = "",
+    time_min: str,
+    time_max: str,
     working_hours_start: int = 9,
     working_hours_end: int = 18,
     exclude_weekends: bool = True,
@@ -231,7 +236,8 @@ def list_event_changes(
 @register(mcp, mutating=True, core=True)
 def create_event(
     account: str | None = None,
-    summary: str = "",
+    *,
+    summary: str,
     start_time: str | None = None,
     end_time: str | None = None,
     description: str | None = None,
@@ -266,8 +272,9 @@ def create_event(
 @register(mcp, mutating=True)
 def create_out_of_office(
     account: str | None = None,
-    start_time: str | None = None,
-    end_time: str | None = None,
+    *,
+    start_time: str,
+    end_time: str,
     timezone: str = "UTC",
     calendar_id: str = "primary",
     summary: str | None = None,
@@ -294,8 +301,9 @@ def create_out_of_office(
 @register(mcp, mutating=True)
 def create_focus_time(
     account: str | None = None,
-    start_time: str | None = None,
-    end_time: str | None = None,
+    *,
+    start_time: str,
+    end_time: str,
     timezone: str = "UTC",
     calendar_id: str = "primary",
     summary: str | None = None,
@@ -322,7 +330,8 @@ def create_focus_time(
 @register(mcp, mutating=True, core=True)
 def update_event(
     account: str | None = None,
-    event_id: str = "",
+    *,
+    event_id: str,
     calendar_id: str = "primary",
     summary: str | None = None,
     start_time: str | None = None,
@@ -361,7 +370,8 @@ def update_event(
 @register(mcp, mutating=True, core=True)
 def quick_add_event(
     account: str | None = None,
-    text: str = "",
+    *,
+    text: str,
     calendar_id: str = "primary",
 ) -> dict:
     """Create an event from a natural-language description (e.g. 'Meeting tomorrow 3pm')."""
@@ -373,8 +383,9 @@ def quick_add_event(
 @register(mcp, mutating=True)
 def move_event(
     account: str | None = None,
-    event_id: str = "",
-    destination_calendar_id: str = "",
+    *,
+    event_id: str,
+    destination_calendar_id: str,
     calendar_id: str = "primary",
 ) -> dict:
     """Move an event from one calendar to another."""
@@ -392,18 +403,18 @@ def move_event(
 @register(mcp, mutating=True)
 def add_attendees(
     account: str | None = None,
-    event_id: str = "",
-    attendee_emails: list[str] | None = None,
+    *,
+    event_id: str,
+    attendee_emails: list[str],
     calendar_id: str = "primary",
     send_updates: str = "all",
 ) -> dict:
     """Add attendees to an existing event."""
     api, resolved = _api(account)
-    emails = attendee_emails or []
     data = run_tool(
         lambda: api.add_attendees(
             event_id=event_id,
-            attendee_emails=emails,
+            attendee_emails=attendee_emails,
             calendar_id=calendar_id,
             send_updates=send_updates,
         )
@@ -414,18 +425,18 @@ def add_attendees(
 @register(mcp, mutating=True)
 def remove_attendees(
     account: str | None = None,
-    event_id: str = "",
-    attendee_emails: list[str] | None = None,
+    *,
+    event_id: str,
+    attendee_emails: list[str],
     calendar_id: str = "primary",
     send_updates: str = "all",
 ) -> dict:
     """Remove attendees from an existing event."""
     api, resolved = _api(account)
-    emails = attendee_emails or []
     data = run_tool(
         lambda: api.remove_attendees(
             event_id=event_id,
-            attendee_emails=emails,
+            attendee_emails=attendee_emails,
             calendar_id=calendar_id,
             send_updates=send_updates,
         )
@@ -436,8 +447,9 @@ def remove_attendees(
 @register(mcp, mutating=True, core=True)
 def respond_to_event(
     account: str | None = None,
-    event_id: str = "",
-    response: str = "",
+    *,
+    event_id: str,
+    response: str,
     calendar_id: str = "primary",
     send_updates: str = "all",
 ) -> dict:
@@ -453,9 +465,10 @@ def respond_to_event(
 @register(mcp, mutating=True)
 def propose_new_time(
     account: str | None = None,
-    event_id: str = "",
-    new_start_time: str = "",
-    new_end_time: str = "",
+    *,
+    event_id: str,
+    new_start_time: str,
+    new_end_time: str,
     calendar_id: str = "primary",
 ) -> dict:
     """Propose a new time for an event as an attendee (RFC3339 timestamps)."""
@@ -474,7 +487,8 @@ def propose_new_time(
 @register(mcp, mutating=True)
 def create_calendar(
     account: str | None = None,
-    summary: str = "",
+    *,
+    summary: str,
     description: str | None = None,
     timezone: str | None = None,
     color_id: str | None = None,
@@ -495,7 +509,8 @@ def create_calendar(
 @register(mcp, mutating=True)
 def update_calendar(
     account: str | None = None,
-    calendar_id: str = "",
+    *,
+    calendar_id: str,
     summary: str | None = None,
     description: str | None = None,
     timezone: str | None = None,
@@ -522,7 +537,8 @@ def update_calendar(
 @register(mcp, mutating=True, destructive=True, core=True)
 def delete_event(
     account: str | None = None,
-    event_id: str = "",
+    *,
+    event_id: str,
     calendar_id: str = "primary",
 ) -> dict:
     """Permanently delete a calendar event."""
@@ -534,7 +550,8 @@ def delete_event(
 @register(mcp, mutating=True, destructive=True)
 def delete_calendar(
     account: str | None = None,
-    calendar_id: str = "",
+    *,
+    calendar_id: str,
 ) -> dict:
     """Permanently delete a secondary calendar and all its events."""
     api, resolved = _api(account)
@@ -545,7 +562,8 @@ def delete_calendar(
 @register(mcp, mutating=True, destructive=True)
 def clear_calendar(
     account: str | None = None,
-    calendar_id: str = "",
+    *,
+    calendar_id: str,
 ) -> dict:
     """Remove all events from a calendar (primary calendar only)."""
     api, resolved = _api(account)

@@ -113,7 +113,8 @@ def _too_big(data, max_chars: int | None) -> bool:
 @register(mcp, core=True)
 def get_message(
     account: str | None = None,
-    message_id: str = "",
+    *,
+    message_id: str,
     format: str = "text",
     max_chars: int | None = None,
     offset: int = 0,
@@ -167,7 +168,8 @@ def list_threads(
 @register(mcp, core=True)
 def get_thread(
     account: str | None = None,
-    thread_id: str = "",
+    *,
+    thread_id: str,
     format: str = "text",
     max_chars: int | None = None,
     offset: int = 0,
@@ -211,7 +213,8 @@ def get_thread(
 @register(mcp, core=True)
 def download_attachment(
     account: str | None = None,
-    message_id: str = "",
+    *,
+    message_id: str,
     output_dir: str | None = None,
     attachment_id: str | None = None,
     overwrite: bool = False,
@@ -258,7 +261,7 @@ def list_labels(account: str | None = None) -> dict:
 
 
 @register(mcp)
-def get_label(account: str | None = None, label_id: str = "") -> dict:
+def get_label(account: str | None = None, *, label_id: str) -> dict:
     """Get a specific label by ID."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.get_label(label_id))
@@ -283,7 +286,7 @@ def list_drafts(
 
 
 @register(mcp)
-def get_draft(account: str | None = None, draft_id: str = "") -> dict:
+def get_draft(account: str | None = None, *, draft_id: str) -> dict:
     """Get a specific draft by ID."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.get_draft(draft_id))
@@ -299,7 +302,7 @@ def list_filters(account: str | None = None) -> dict:
 
 
 @register(mcp)
-def get_filter(account: str | None = None, filter_id: str = "") -> dict:
+def get_filter(account: str | None = None, *, filter_id: str) -> dict:
     """Get a specific Gmail filter by ID."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.get_filter(filter_id))
@@ -319,7 +322,8 @@ def get_changes_start_token(account: str | None = None) -> dict:
 @register(mcp)
 def list_changes(
     account: str | None = None,
-    start_history_token: str = "",
+    *,
+    start_history_token: str,
     history_types: list[str] | None = None,
     label_id: str | None = None,
     max_results: int = 100,
@@ -351,7 +355,8 @@ def list_changes(
 @register(mcp, mutating=True, destructive=True, open_world=True, core=True)
 def send_message(
     account: str | None = None,
-    to: str = "",
+    *,
+    to: str,
     subject: str = "",
     body: str = "",
     cc: str | None = None,
@@ -373,8 +378,9 @@ def send_message(
 @register(mcp, mutating=True, destructive=True, open_world=True, core=True)
 def reply_to_message(
     account: str | None = None,
-    message_id: str = "",
-    body: str = "",
+    *,
+    message_id: str,
+    body: str,
     reply_all: bool = False,
     additional_cc: str | None = None,
     attachments: list[str] | None = None,
@@ -391,8 +397,9 @@ def reply_to_message(
 @register(mcp, mutating=True, core=True)
 def draft_reply(
     account: str | None = None,
-    message_id: str = "",
-    body: str = "",
+    *,
+    message_id: str,
+    body: str,
     reply_all: bool = False,
     additional_cc: str | None = None,
     attachments: list[str] | None = None,
@@ -412,8 +419,9 @@ def draft_reply(
 @register(mcp, mutating=True, destructive=True, open_world=True, core=True)
 def forward_message(
     account: str | None = None,
-    message_id: str = "",
-    to: str = "",
+    *,
+    message_id: str,
+    to: str,
     body: str | None = None,
     attachments: list[str] | None = None,
 ) -> dict:
@@ -450,7 +458,8 @@ def create_draft(
 @register(mcp, mutating=True)
 def update_draft(
     account: str | None = None,
-    draft_id: str = "",
+    *,
+    draft_id: str,
     to: str | None = None,
     subject: str | None = None,
     body: str | None = None,
@@ -473,7 +482,7 @@ def update_draft(
 
 
 @register(mcp, mutating=True, destructive=True, open_world=True, core=True)
-def send_draft(account: str | None = None, draft_id: str = "") -> dict:
+def send_draft(account: str | None = None, *, draft_id: str) -> dict:
     """Send an existing draft, completing the draft -> review -> send loop.
 
     Sends the draft as-is (threaded if it was a threaded draft). Returns the
@@ -487,7 +496,8 @@ def send_draft(account: str | None = None, draft_id: str = "") -> dict:
 @register(mcp, mutating=True, core=True)
 def modify_labels(
     account: str | None = None,
-    message_id: str = "",
+    *,
+    message_id: str,
     add_label_ids: list[str] | None = None,
     remove_label_ids: list[str] | None = None,
 ) -> dict:
@@ -498,7 +508,7 @@ def modify_labels(
 
 
 @register(mcp, mutating=True)
-def mark_read(account: str | None = None, message_id: str = "") -> dict:
+def mark_read(account: str | None = None, *, message_id: str) -> dict:
     """Mark a message as read (removes the UNREAD label)."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.mark_as_read(message_id))
@@ -506,7 +516,7 @@ def mark_read(account: str | None = None, message_id: str = "") -> dict:
 
 
 @register(mcp, mutating=True, core=True)
-def archive_message(account: str | None = None, message_id: str = "") -> dict:
+def archive_message(account: str | None = None, *, message_id: str) -> dict:
     """Archive a message by removing it from the INBOX."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.archive_message(message_id))
@@ -514,7 +524,7 @@ def archive_message(account: str | None = None, message_id: str = "") -> dict:
 
 
 @register(mcp, mutating=True)
-def star_message(account: str | None = None, message_id: str = "") -> dict:
+def star_message(account: str | None = None, *, message_id: str) -> dict:
     """Star a message."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.star_message(message_id))
@@ -522,7 +532,7 @@ def star_message(account: str | None = None, message_id: str = "") -> dict:
 
 
 @register(mcp, mutating=True)
-def unstar_message(account: str | None = None, message_id: str = "") -> dict:
+def unstar_message(account: str | None = None, *, message_id: str) -> dict:
     """Remove the star from a message."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.unstar_message(message_id))
@@ -530,7 +540,7 @@ def unstar_message(account: str | None = None, message_id: str = "") -> dict:
 
 
 @register(mcp, mutating=True)
-def mark_as_spam(account: str | None = None, message_id: str = "") -> dict:
+def mark_as_spam(account: str | None = None, *, message_id: str) -> dict:
     """Mark a message as spam (adds SPAM label, removes INBOX)."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.mark_as_spam(message_id))
@@ -538,7 +548,7 @@ def mark_as_spam(account: str | None = None, message_id: str = "") -> dict:
 
 
 @register(mcp, mutating=True)
-def unmark_spam(account: str | None = None, message_id: str = "") -> dict:
+def unmark_spam(account: str | None = None, *, message_id: str) -> dict:
     """Remove spam marking from a message (removes SPAM label, restores INBOX)."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.unmark_spam(message_id))
@@ -548,7 +558,8 @@ def unmark_spam(account: str | None = None, message_id: str = "") -> dict:
 @register(mcp, mutating=True)
 def create_label(
     account: str | None = None,
-    name: str = "",
+    *,
+    name: str,
     message_list_visibility: str = "show",
     label_list_visibility: str = "labelShow",
 ) -> dict:
@@ -561,7 +572,8 @@ def create_label(
 @register(mcp, mutating=True)
 def update_label(
     account: str | None = None,
-    label_id: str = "",
+    *,
+    label_id: str,
     name: str | None = None,
     message_list_visibility: str | None = None,
     label_list_visibility: str | None = None,
@@ -575,17 +587,18 @@ def update_label(
 @register(mcp, mutating=True, destructive=True, open_world=True)
 def create_filter(
     account: str | None = None,
-    criteria: dict | None = None,
-    action: dict | None = None,
+    *,
+    criteria: dict,
+    action: dict,
 ) -> dict:
     """Create a Gmail filter with given criteria (from, to, subject) and action (addLabelIds, etc.)."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.create_filter(criteria or {}, action or {}))
+    data = run_tool(lambda: api.create_filter(criteria, action))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True, destructive=True)
-def block_sender(account: str | None = None, email: str = "") -> dict:
+def block_sender(account: str | None = None, *, email: str) -> dict:
     """Block a sender by creating a filter that marks their emails as spam."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.block_sender(email))
@@ -595,13 +608,14 @@ def block_sender(account: str | None = None, email: str = "") -> dict:
 @register(mcp, mutating=True)
 def batch_modify_labels(
     account: str | None = None,
-    message_ids: list[str] | None = None,
+    *,
+    message_ids: list[str],
     add_label_ids: list[str] | None = None,
     remove_label_ids: list[str] | None = None,
 ) -> dict:
     """Add or remove labels on multiple messages in a single batch operation."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.batch_modify_messages(message_ids or [], add_label_ids=add_label_ids, remove_label_ids=remove_label_ids))
+    data = run_tool(lambda: api.batch_modify_messages(message_ids, add_label_ids=add_label_ids, remove_label_ids=remove_label_ids))
     return ok(resolved, data)
 
 
@@ -610,7 +624,7 @@ def batch_modify_labels(
 # ---------------------------------------------------------------------------
 
 @register(mcp, mutating=True, destructive=True, core=True)
-def trash_message(account: str | None = None, message_id: str = "") -> dict:
+def trash_message(account: str | None = None, *, message_id: str) -> dict:
     """Move a message to trash (can be recovered with untrash_message)."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.trash_message(message_id))
@@ -618,7 +632,7 @@ def trash_message(account: str | None = None, message_id: str = "") -> dict:
 
 
 @register(mcp, mutating=True, destructive=True)
-def untrash_message(account: str | None = None, message_id: str = "") -> dict:
+def untrash_message(account: str | None = None, *, message_id: str) -> dict:
     """Restore a message from trash back to the inbox."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.untrash_message(message_id))
@@ -626,7 +640,7 @@ def untrash_message(account: str | None = None, message_id: str = "") -> dict:
 
 
 @register(mcp, mutating=True, destructive=True)
-def delete_message(account: str | None = None, message_id: str = "") -> dict:
+def delete_message(account: str | None = None, *, message_id: str) -> dict:
     """Permanently delete a message (cannot be undone; use trash_message to recover later)."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.delete_message(message_id))
@@ -634,7 +648,7 @@ def delete_message(account: str | None = None, message_id: str = "") -> dict:
 
 
 @register(mcp, mutating=True, destructive=True)
-def delete_label(account: str | None = None, label_id: str = "") -> dict:
+def delete_label(account: str | None = None, *, label_id: str) -> dict:
     """Permanently delete a label from the mailbox."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.delete_label(label_id))
@@ -642,7 +656,7 @@ def delete_label(account: str | None = None, label_id: str = "") -> dict:
 
 
 @register(mcp, mutating=True, destructive=True)
-def delete_draft(account: str | None = None, draft_id: str = "") -> dict:
+def delete_draft(account: str | None = None, *, draft_id: str) -> dict:
     """Permanently delete a draft (e.g. to clean up a superseded one)."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.delete_draft(draft_id))
@@ -650,7 +664,7 @@ def delete_draft(account: str | None = None, draft_id: str = "") -> dict:
 
 
 @register(mcp, mutating=True, destructive=True)
-def delete_filter(account: str | None = None, filter_id: str = "") -> dict:
+def delete_filter(account: str | None = None, *, filter_id: str) -> dict:
     """Permanently delete a Gmail filter."""
     api, resolved = _api(account)
     data = run_tool(lambda: api.delete_filter(filter_id))
@@ -660,33 +674,36 @@ def delete_filter(account: str | None = None, filter_id: str = "") -> dict:
 @register(mcp, mutating=True, destructive=True)
 def batch_trash_messages(
     account: str | None = None,
-    message_ids: list[str] | None = None,
+    *,
+    message_ids: list[str],
 ) -> dict:
     """Move multiple messages to trash in a single batch operation."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.batch_trash_messages(message_ids or []))
+    data = run_tool(lambda: api.batch_trash_messages(message_ids))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True, destructive=True)
 def batch_untrash_messages(
     account: str | None = None,
-    message_ids: list[str] | None = None,
+    *,
+    message_ids: list[str],
 ) -> dict:
     """Restore multiple messages from trash in a single batch operation."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.batch_untrash_messages(message_ids or []))
+    data = run_tool(lambda: api.batch_untrash_messages(message_ids))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True, destructive=True)
 def batch_delete_messages(
     account: str | None = None,
-    message_ids: list[str] | None = None,
+    *,
+    message_ids: list[str],
 ) -> dict:
     """Permanently delete multiple messages in a single batch operation (cannot be undone)."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.batch_delete_messages(message_ids or []))
+    data = run_tool(lambda: api.batch_delete_messages(message_ids))
     return ok(resolved, data)
 
 
