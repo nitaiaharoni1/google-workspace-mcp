@@ -404,6 +404,8 @@ async def test_required_ids_are_required_in_schema():
         (dr, "batch_trash_files", {"file_ids"}, None),
         (g, "create_filter", {"criteria", "action"}, None),
         (c, "add_attendees", {"event_id", "attendee_emails"}, "send_updates"),
+        (c, "create_out_of_office", {"start_time", "end_time"}, "timezone"),
+        (d, "populate_table", {"document_id", "table_start_index", "rows"}, "segment_id"),
         (s, "update_range", {"spreadsheet_id", "range", "values"}, "value_input_option"),
     ]
     for mod, name, required, optional in cases:
