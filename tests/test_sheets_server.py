@@ -1072,9 +1072,9 @@ class TestSheetsAPITextEditing:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _parse_result(raw):
-    """Extract the dict payload from a FastMCP call_tool response (list of TextContent)."""
-    assert len(raw) == 1, f"Expected 1 content item, got {len(raw)}: {raw}"
-    return json.loads(raw[0].text)
+    """Extract the dict payload from an MCPServer call_tool result."""
+    assert len(raw.content) == 1, f"Expected 1 content item, got {len(raw.content)}: {raw}"
+    return json.loads(raw.content[0].text)
 
 
 @pytest.fixture

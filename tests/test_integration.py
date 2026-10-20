@@ -191,12 +191,12 @@ async def test_annotations_read_vs_destructive():
         tools = await mod.mcp.list_tools()
         read_ann = _tool_by_name(tools, read_tool).annotations
         assert read_ann is not None
-        assert read_ann.readOnlyHint is True
+        assert read_ann.read_only_hint is True
 
         dest_ann = _tool_by_name(tools, destructive_tool).annotations
         assert dest_ann is not None
-        assert dest_ann.readOnlyHint is False
-        assert dest_ann.destructiveHint is True
+        assert dest_ann.read_only_hint is False
+        assert dest_ann.destructive_hint is True
 
 
 @pytest.mark.anyio
@@ -218,8 +218,8 @@ async def test_annotations_mutating_not_destructive():
         tools = await mod.mcp.list_tools()
         ann = _tool_by_name(tools, write_tool).annotations
         assert ann is not None
-        assert ann.readOnlyHint is False
-        assert ann.destructiveHint is False
+        assert ann.read_only_hint is False
+        assert ann.destructive_hint is False
 
 
 @pytest.mark.anyio
@@ -235,7 +235,7 @@ async def test_common_tools_readonly_hint():
         for name in ("list_accounts", "whoami", "auth_status"):
             ann = _tool_by_name(tools, name).annotations
             assert ann is not None
-            assert ann.readOnlyHint is True
+            assert ann.read_only_hint is True
 
 
 @pytest.mark.anyio
@@ -249,17 +249,12 @@ async def test_no_output_schema_regression():
     for mod in (g, c, s, d, dr):
         tools = await mod.mcp.list_tools()
         for tool in tools:
-            assert tool.outputSchema is None, tool.name
+            assert tool.output_schema is None, tool.name
 
 
 def _parse_tool(result) -> dict:
-    if isinstance(result, tuple):
-        content, structured = result
-        if structured:
-            return structured
-        result = content
-    assert result, "empty tool result"
-    return json.loads(result[0].text)
+    assert result.content, "empty tool result"
+    return json.loads(result.content[0].text)
 
 
 @pytest.mark.anyio
@@ -295,3 +290,27 @@ async def test_whoami_error_returns_resolved_account(store_env, write_token):
     assert data["ok"] is False
     assert data["account"] == "ghost@x.com"
 
+
+
+@pytest.mark.anyio
+async def test_tool_errors_keep_actionable_message(store_env):
+    # mcp 2.x masks non-ToolError exceptions; our auth/argument errors must still
+    # reach the model with their text.
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    mcp = build_server("test-mcp")
+
+    @runtime.register(mcp)
+    def needs_login(account: str | None = None) -> dict:
+        """Fails like a tool whose account has no token."""
+        raise core.AuthError("Run: google-auth login nobody@x.com")
+
+    @runtime.register(mcp)
+    def bad_arg(account: str | None = None) -> dict:
+        """Fails like a tool rejecting an argument."""
+        raise ValueError("range must be A1 notation")
+
+    with pytest.raises(ToolError, match="google-auth login nobody@x.com"):
+        await mcp.call_tool("needs_login", {})
+    with pytest.raises(ToolError, match="range must be A1 notation"):
+        await mcp.call_tool("bad_arg", {})

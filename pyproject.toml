@@ -25,9 +25,8 @@ classifiers = [
     "Topic :: Office/Business",
 ]
 dependencies = [
-    # mcp 2.0 removed mcp.server.fastmcp (renamed to mcp.server.mcpserver);
-    # core/server.py still imports FastMCP, so stay on the 1.x line.
-    "mcp>=1.26,<2",
+    # mcp 2.x API (MCPServer, snake_case types, CallToolResult); not 1.x compatible.
+    "mcp>=2,<3",
     "google-auth-core>=0.2.1",
     "gmail-cli-oauth>=1.6.0",
     "google-calendar-cli>=1.7.0",

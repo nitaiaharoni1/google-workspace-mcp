@@ -28,9 +28,9 @@ def fake_api(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def _parse(result) -> dict:
-    """Extract the ok-envelope dict from a FastMCP call_tool result."""
-    assert isinstance(result, list) and len(result) == 1
-    return json.loads(result[0].text)
+    """Extract the ok-envelope dict from an MCPServer call_tool result."""
+    assert len(result.content) == 1
+    return json.loads(result.content[0].text)
 
 
 # ---------------------------------------------------------------------------

@@ -18,12 +18,7 @@ def anyio_backend():
 
 
 def envelope(res):
-    if isinstance(res, tuple):
-        content, structured = res
-        if structured:
-            return structured
-        res = content
-    for b in res:
+    for b in res.content:
         if isinstance(b, TextContent):
             return json.loads(b.text)
     raise AssertionError("no parsable content")
@@ -525,7 +520,7 @@ async def test_tools_registered_and_account_param():
     ]
     for name in docs_tools:
         assert name in tools, f"missing tool {name}"
-        assert "account" in (tools[name].inputSchema or {}).get("properties", {})
+        assert "account" in (tools[name].input_schema or {}).get("properties", {})
     # common tools present
     assert {"list_accounts", "whoami", "auth_status"}.issubset(tools)
 

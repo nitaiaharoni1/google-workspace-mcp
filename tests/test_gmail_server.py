@@ -303,8 +303,8 @@ def make_fake_api():
 
 def parse_result(result):
     """Extract the dict from call_tool's TextContent list."""
-    assert isinstance(result, list) and len(result) > 0
-    text = result[0].text
+    assert len(result.content) > 0
+    text = result.content[0].text
     return json.loads(text)
 
 
