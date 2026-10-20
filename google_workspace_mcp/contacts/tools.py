@@ -16,7 +16,7 @@ def _api(account=None, service_name=None):
 
 
 def register_contacts_tools(mcp, service_name: str | None = None) -> None:
-    @register(mcp)
+    @register(mcp, core=True)
     def search_contacts(
         account: str | None = None,
         *,

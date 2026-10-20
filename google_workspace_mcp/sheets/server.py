@@ -24,7 +24,7 @@ def _api(account=None):
 
 # --- READ tools ---
 
-@register(mcp)
+@register(mcp, core=True)
 def get_spreadsheet(account: str | None = None, spreadsheet_id: str = "", include_grid_data: bool = False) -> dict:
     """Return spreadsheet metadata (title, sheets list, properties). Set include_grid_data=True to also return cell data."""
     api, resolved = _api(account)
@@ -49,7 +49,7 @@ def _cap_rows(value_range: dict, max_chars: int | None) -> bool:
     return True
 
 
-@register(mcp)
+@register(mcp, core=True)
 def read_range(account: str | None = None, spreadsheet_id: str = "", range: str = "", value_render_option: str = "FORMATTED_VALUE", max_chars: int | None = None) -> dict:
     """Read cell values from a range (A1 notation, e.g. 'Sheet1!A1:C10').
 
@@ -63,7 +63,7 @@ def read_range(account: str | None = None, spreadsheet_id: str = "", range: str 
     return ok(resolved, data)
 
 
-@register(mcp)
+@register(mcp, core=True)
 def batch_read(account: str | None = None, spreadsheet_id: str = "", ranges: list[str] | None = None, value_render_option: str = "FORMATTED_VALUE", max_chars: int | None = None) -> dict:
     """Read cell values from multiple ranges in one request (A1 notation).
 
@@ -93,7 +93,7 @@ def batch_read(account: str | None = None, spreadsheet_id: str = "", ranges: lis
 
 # --- WRITE (mutating) tools ---
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def create_spreadsheet(account: str | None = None, title: str = "") -> dict:
     """Create a new Google Spreadsheet with the given title and return its metadata."""
     api, resolved = _api(account)
@@ -101,7 +101,7 @@ def create_spreadsheet(account: str | None = None, title: str = "") -> dict:
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def update_range(account: str | None = None, spreadsheet_id: str = "", range: str = "", values: list[list] | None = None, value_input_option: str = "USER_ENTERED") -> dict:
     """Write a 2D array of values to a range (A1 notation). Overwrites existing cells."""
     api, resolved = _api(account)
@@ -109,7 +109,7 @@ def update_range(account: str | None = None, spreadsheet_id: str = "", range: st
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def batch_update_values(account: str | None = None, spreadsheet_id: str = "", data: list[dict] | None = None, value_input_option: str = "USER_ENTERED") -> dict:
     """Write values to multiple ranges in one request. Each item in data must have 'range' and 'values' keys."""
     api, resolved = _api(account)
@@ -117,7 +117,7 @@ def batch_update_values(account: str | None = None, spreadsheet_id: str = "", da
     return ok(resolved, result)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def append_rows(account: str | None = None, spreadsheet_id: str = "", range: str = "", values: list[list] | None = None, value_input_option: str = "USER_ENTERED") -> dict:
     """Append rows after the last row with data in the given range (A1 notation)."""
     api, resolved = _api(account)
@@ -125,7 +125,7 @@ def append_rows(account: str | None = None, spreadsheet_id: str = "", range: str
     return ok(resolved, result)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def add_sheet(account: str | None = None, spreadsheet_id: str = "", title: str = "") -> dict:
     """Add a new sheet (tab) to an existing spreadsheet."""
     api, resolved = _api(account)
@@ -143,7 +143,7 @@ def rename_sheet(account: str | None = None, spreadsheet_id: str = "", sheet_id:
 
 # --- DESTRUCTIVE tools ---
 
-@register(mcp, mutating=True, destructive=True)
+@register(mcp, mutating=True, destructive=True, core=True)
 def clear_range(account: str | None = None, spreadsheet_id: str = "", range: str = "") -> dict:
     """Clear values from a range (formatting is kept)."""
     api, resolved = _api(account)
@@ -161,7 +161,7 @@ def delete_sheet(account: str | None = None, spreadsheet_id: str = "", sheet_id:
 
 # --- FORMATTING / STRUCTURE (mutating) tools ---
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def format_cells(account: str | None = None, spreadsheet_id: str = "", range: str = "", bold: bool | None = None, italic: bool | None = None, strikethrough: bool | None = None, underline: bool | None = None, font_size: int | None = None, text_color: str | None = None, background_color: str | None = None, number_format: str | None = None, horizontal_alignment: str | None = None, vertical_alignment: str | None = None, wrap: bool | None = None) -> dict:
     """Apply formatting to a range (A1 notation). Colors are hex (e.g. '#FF0000'); horizontal_alignment is LEFT/CENTER/RIGHT; vertical_alignment is TOP/MIDDLE/BOTTOM; wrap=True enables text wrap."""
     api, resolved = _api(account)
@@ -193,7 +193,7 @@ def clear_basic_filter(account: str | None = None, spreadsheet_id: str = "", ran
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def find_replace(account: str | None = None, spreadsheet_id: str = "", find: str = "", replacement: str = "", range: str | None = None, all_sheets: bool = False, match_case: bool = False, match_entire_cell: bool = False, search_by_regex: bool = False, include_formulas: bool = False) -> dict:
     """Find and replace text. Scope to a range (A1, e.g. 'Sheet1!A1:C9'), a whole sheet (bare tab name like 'Sheet1'), or set all_sheets=True. search_by_regex treats 'find' as a regex; include_formulas also searches formula text. Returns counts of changes."""
     api, resolved = _api(account)
@@ -393,7 +393,7 @@ def optimize_layout(account: str | None = None, spreadsheet_id: str = "", range:
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def write_table(account: str | None = None, spreadsheet_id: str = "", anchor: str = "", values: list[list] | None = None, style: str = "native", name: str | None = None, header_color: str = "#355468", first_band_color: str = "#FFFFFF", second_band_color: str = "#F3F3F3", max_column_width: int = 320) -> dict:
     """Write a 2D array (first row = headers) at an anchor cell (e.g. 'Sheet1!A1') and make it readable in one shot: native Sheets table (style='native'), alternating-color banding (style='banded'), or values only (style='plain'), plus content-aware column widths and wrapping. Prefer this over update_range for tabular data. Overwrites cells in the target range. If a native table already overlaps the range, use style='banded' or update_table instead."""
     api, resolved = _api(account)

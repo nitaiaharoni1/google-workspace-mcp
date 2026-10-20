@@ -211,6 +211,87 @@ def test_readonly_gate_hides_mutating_tools_docs_drive(pkg, read_tool, write_too
     assert out.stdout.strip() == "(False, True)"
 
 
+# --- toolset gate ------------------------------------------------------------
+
+_CORE_TOOLSET = {
+    "gmail": {
+        "list_messages", "search_messages", "get_message", "get_thread", "list_labels",
+        "download_attachment", "send_message", "reply_to_message", "draft_reply",
+        "forward_message", "create_draft", "list_drafts", "send_draft", "modify_labels",
+        "archive_message", "trash_message", "search_contacts",
+    },
+    "calendar": {
+        "list_calendars", "list_events", "search_events", "get_event", "freebusy_query",
+        "find_available_slots", "create_event", "quick_add_event", "update_event",
+        "respond_to_event", "delete_event", "search_contacts",
+    },
+    "sheets": {
+        "get_spreadsheet", "read_range", "batch_read", "create_spreadsheet", "update_range",
+        "batch_update_values", "append_rows", "write_table", "add_sheet", "clear_range",
+        "format_cells", "find_replace",
+    },
+    "docs": {
+        "read_document", "read_document_as_markdown", "get_content_map",
+        "create_document_from_markdown", "replace_document_with_markdown", "append_markdown",
+        "insert_text", "replace_all_text", "format_text", "insert_table",
+    },
+    "drive": {
+        "search_files", "list_files", "get_file", "read_file_text", "download_file",
+        "export_file", "upload_file", "create_folder", "move_file", "rename_file", "copy_file",
+        "share_file", "trash_file",
+    },
+}
+_COMMON = {"list_accounts", "whoami", "auth_status"}
+
+
+def _tool_names(pkg, env):
+    code = (
+        "import asyncio, json\n"
+        f"from google_workspace_mcp.{pkg} import server\n"
+        "print(json.dumps(sorted(t.name for t in asyncio.run(server.mcp.list_tools()))))\n"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
+    assert out.returncode == 0, out.stderr
+    return set(json.loads(out.stdout))
+
+
+def _base_env():
+    return {
+        k: v for k, v in os.environ.items()
+        if k not in ("GOOGLE_MCP_READONLY", "GOOGLE_MCP_TOOLSET")
+    }
+
+
+@pytest.mark.parametrize("pkg", sorted(_CORE_TOOLSET))
+def test_core_toolset_registers_expected_tools(pkg):
+    names = _tool_names(pkg, {**_base_env(), "GOOGLE_MCP_TOOLSET": "core"})
+    assert names == _CORE_TOOLSET[pkg] | _COMMON
+
+
+@pytest.mark.parametrize("pkg", sorted(_CORE_TOOLSET))
+def test_default_toolset_is_all(pkg):
+    default = _tool_names(pkg, _base_env())
+    explicit_all = _tool_names(pkg, {**_base_env(), "GOOGLE_MCP_TOOLSET": "all"})
+    assert default == explicit_all
+    assert default > _CORE_TOOLSET[pkg] | _COMMON
+
+
+def test_core_toolset_combines_with_readonly():
+    env = {**_base_env(), "GOOGLE_MCP_TOOLSET": "core", "GOOGLE_MCP_READONLY": "1"}
+    names = _tool_names("gmail", env)
+    assert {"list_messages", "get_message"} <= names
+    assert not names & {"send_message", "trash_message", "list_changes"}
+
+
+def test_unknown_toolset_warns_and_registers_all():
+    code = "from google_workspace_mcp.gmail import server  # noqa: F401\n"
+    env = {**_base_env(), "GOOGLE_MCP_TOOLSET": "cor"}
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
+    assert out.returncode == 0, out.stderr
+    assert "GOOGLE_MCP_TOOLSET" in out.stderr and out.stdout == ""
+    assert _tool_names("gmail", env) == _tool_names("gmail", _base_env())
+
+
 # --- alignment: every server exposes the common tools ------------------------
 
 @pytest.mark.anyio

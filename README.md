@@ -242,6 +242,17 @@ writes to that directory (downloads then need an explicit path inside it).
 Downloads never replace an existing file unless the call passes
 `overwrite=true`; a clash in the default temp dir gets a new name instead.
 
+## Smaller tool set
+
+The full servers expose about 190 tools, and every tool schema costs agent
+context. Set `GOOGLE_MCP_TOOLSET=core` in a server's environment to register
+only the everyday tools (10-16 per server: read/search/get, basic
+create and update, Gmail send/reply/drafts, Calendar event CRUD, Sheets range
+reads/writes and `write_table`, Docs markdown create/read/append, Drive
+search/read/upload/move). `list_accounts`, `whoami` and `auth_status` are always
+included. The default is `all`. It combines with `GOOGLE_MCP_READONLY`: with
+both set you get the read-only part of the core set.
+
 ## Testing
 
 ```bash

@@ -47,7 +47,7 @@ def get_document(
     return ok(resolved, data, **meta)
 
 
-@register(mcp)
+@register(mcp, core=True)
 def read_document(
     account: str | None = None,
     document_id: str = "",
@@ -68,7 +68,7 @@ def read_document(
     return ok(resolved, data, **meta)
 
 
-@register(mcp)
+@register(mcp, core=True)
 def read_document_as_markdown(
     account: str | None = None,
     document_id: str = "",
@@ -89,7 +89,7 @@ def read_document_as_markdown(
     return ok(resolved, data, **meta)
 
 
-@register(mcp)
+@register(mcp, core=True)
 def get_content_map(account: str | None = None, document_id: str = "", include_headers_footers: bool = True) -> dict:
     """Return a structured index map of document elements (paragraphs, tables, indices, text previews)."""
     api, resolved = _api(account)
@@ -105,21 +105,21 @@ def create_document(account: str | None = None, title: str = "") -> dict:
     return ok(resolved, run_tool(lambda: api.create_document(title)))
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def create_document_from_markdown(account: str | None = None, title: str = "", markdown: str = "", folder_id: str | None = None) -> dict:
     """Create a Google Doc from markdown text: headings, bold/italic, lists, links, and tables become native Docs formatting. Prefer this over create_document + insert/format calls for formatted content."""
     api, resolved = _api(account)
     return ok(resolved, run_tool(lambda: api.create_document_from_markdown(title, markdown, folder_id)))
 
 
-@register(mcp, mutating=True, destructive=True)
+@register(mcp, mutating=True, destructive=True, core=True)
 def replace_document_with_markdown(account: str | None = None, document_id: str = "", markdown: str = "") -> dict:
     """Replace a document's ENTIRE content by re-importing markdown. Comments/suggestions are lost."""
     api, resolved = _api(account)
     return ok(resolved, run_tool(lambda: api.replace_document_with_markdown(document_id, markdown)))
 
 
-@register(mcp, mutating=True, destructive=True)
+@register(mcp, mutating=True, destructive=True, core=True)
 def append_markdown(account: str | None = None, document_id: str = "", markdown: str = "") -> dict:
     """Append markdown to the end of a document. Round-trips the whole doc through markdown export/import, so elements markdown cannot express (comments, positioned images) are lost."""
     api, resolved = _api(account)
@@ -133,14 +133,14 @@ def append_text(account: str | None = None, document_id: str = "", text: str = "
     return ok(resolved, run_tool(lambda: api.append_text(document_id, text)))
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def insert_text(account: str | None = None, document_id: str = "", text: str = "", index: int = 1) -> dict:
     """Insert text at a specific character index (1 = start of body)."""
     api, resolved = _api(account)
     return ok(resolved, run_tool(lambda: api.insert_text(document_id, text, index)))
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def replace_all_text(account: str | None = None, document_id: str = "", find: str = "", replace: str = "", match_case: bool = False) -> dict:
     """Replace every occurrence of a string throughout the document."""
     api, resolved = _api(account)
@@ -148,7 +148,7 @@ def replace_all_text(account: str | None = None, document_id: str = "", find: st
 
 
 # --- format / structure ---
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def format_text(account: str | None = None, document_id: str = "", start_index: int = 1, end_index: int = 1, bold: bool | None = None, italic: bool | None = None, underline: bool | None = None, strikethrough: bool | None = None, font_size: float | None = None, font_family: str | None = None, link_url: str | None = None, foreground_color: str | None = None, background_color: str | None = None, segment_id: str | None = None) -> dict:
     """Style a character range (bold/italic/underline/strikethrough, font size/family in PT, link URL, hex foreground/background colors). Use segment_id for header/footer text."""
     api, resolved = _api(account)
@@ -236,7 +236,7 @@ def insert_chart_image(account: str | None = None, document_id: str = "", uri: s
     return ok(resolved, data)
 
 
-@register(mcp, mutating=True)
+@register(mcp, mutating=True, core=True)
 def insert_table(account: str | None = None, document_id: str = "", rows: int = 2, columns: int = 2, index: int = 1, segment_id: str | None = None) -> dict:
     """Insert an empty table at the given body index (or in a header/footer via segment_id)."""
     api, resolved = _api(account)
