@@ -6,9 +6,13 @@ through these helpers, which is what keeps the five servers aligned.
 from __future__ import annotations
 
 import functools
+import math
 import os
+import random
+import re
 import threading
 import time
+from contextvars import ContextVar
 from typing import Any, Callable, Optional
 
 import anyio.to_thread
@@ -38,6 +42,19 @@ _held = threading.local()
 # Seconds to wait before each retry when a connection to Google could not be
 # opened at all (network blip, Wi-Fi/VPN change, wake from sleep).
 _CONNECT_RETRY_DELAYS = (2, 5)
+
+# Rate limits (429) and transient server errors are retried with backoff, but
+# only for calls that are safe to repeat: the first request may have gone
+# through, so a retried send or append could happen twice.
+_TRANSIENT_STATUSES = {500, 502, 503, 504}
+_TRANSIENT_MAX_RETRIES = 4
+_TRANSIENT_BASE_DELAY = 1.0
+_TRANSIENT_MAX_TOTAL_WAIT = 20.0
+
+# Set by the ``register`` wrapper for the duration of a tool call: True for
+# read tools and writes marked idempotent. Calls outside a registered tool
+# default to False and are never retried on 429/5xx.
+_retry_safe: ContextVar[bool] = ContextVar("retry_safe", default=False)
 
 
 def ok(account: str, data: Any, **meta: Any) -> dict:
@@ -97,25 +114,89 @@ def cached_keys() -> list:
         return sorted(_api_cache.keys())
 
 
+def _http_status(exc: BaseException) -> Optional[int]:
+    """HTTP status of a raw HttpError, a wrapped "HttpError NNN" message, or a
+    mapped "(HTTP NNN)" error; None when there is none."""
+    status = getattr(getattr(exc, "resp", None), "status", None)
+    if status is None:
+        # Last match: Google's message may quote user text before the real status.
+        found = re.findall(r"(?:HttpError\s+|\(HTTP )(\d{3})", str(exc))
+        status = found[-1] if found else None
+    try:
+        return int(status) if status is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _transient_delay(err: core.GoogleCoreError, raw: BaseException, attempt: int, waited: float) -> Optional[float]:
+    """Seconds to wait before retrying a rate-limited or 5xx call, or None to give up."""
+    if not _retry_safe.get() or attempt >= _TRANSIENT_MAX_RETRIES:
+        return None
+    retry_after = getattr(err, "retry_after", None)
+    if isinstance(err, core.RateLimitError) and retry_after is not None and 0 <= retry_after < math.inf:
+        delay = retry_after + random.uniform(0, 1)
+    elif isinstance(err, core.RateLimitError) or (
+        isinstance(err, core.UpstreamError) and _http_status(raw) in _TRANSIENT_STATUSES
+    ):
+        backoff = _TRANSIENT_BASE_DELAY * 2**attempt
+        delay = random.uniform(backoff / 2, backoff)
+    else:
+        return None
+    if waited + delay > _TRANSIENT_MAX_TOTAL_WAIT:
+        return None
+    return delay
+
+
 def run_tool(fn: Callable[[], Any]) -> Any:
     """Execute an API call, mapping any failure to the shared error taxonomy.
 
     Failures to open a connection at all are retried after a short wait. The
     request never reached Google in that case, so retrying is safe even for
     writes such as sending mail.
+
+    Rate limits (429) and transient 5xx errors are retried with jittered
+    backoff, honoring Retry-After, up to about 20s in total, but only inside
+    tools registered as reads or idempotent writes (see ``register``).
     """
-    for delay in (*_CONNECT_RETRY_DELAYS, None):
+    connect_delays = iter(_CONNECT_RETRY_DELAYS)
+    attempt = 0
+    waited = 0.0
+    while True:
         try:
             return fn()
-        except core.GoogleCoreError:
-            raise
+        except core.GoogleCoreError as e:
+            raw = err = e
         except ValueError as e:
             raise core.InvalidArgumentError(str(e)) from e
         except Exception as e:  # noqa: BLE001 - normalize everything to GoogleCoreError
-            if delay is not None and core.is_connect_failure(e):
-                time.sleep(delay)
-                continue
-            raise core.map_exception(e)
+            if core.is_connect_failure(e):
+                delay = next(connect_delays, None)
+                if delay is not None:
+                    time.sleep(delay)
+                    continue
+            raw, err = e, core.map_exception(e)
+        delay = _transient_delay(err, raw, attempt, waited)
+        if delay is None:
+            if err is raw:
+                raise err
+            raise err from raw
+        time.sleep(delay)
+        attempt += 1
+        waited += delay
+
+
+def _retry_scope(fn: Callable, safe: bool) -> Callable:
+    """Wrap a tool so ``run_tool`` knows whether its calls may be repeated."""
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        token = _retry_safe.set(safe)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _retry_safe.reset(token)
+
+    return wrapper
 
 
 def _run_scoped(fn: Callable, args: tuple, kwargs: dict) -> Any:
@@ -179,7 +260,8 @@ def register(
             # (sending mail, sharing files).
             openWorldHint=open_world,
         )
-        mcp.tool(annotations=annotations)(_off_loop(fn))
+        retry_safe = not mutating or idempotent is True
+        mcp.tool(annotations=annotations)(_off_loop(_retry_scope(fn, retry_safe)))
         return fn  # direct callers keep the plain sync function
 
     return deco
