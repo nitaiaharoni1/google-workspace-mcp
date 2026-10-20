@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import errno
 
+import anyio
+
 import google_auth_core as core
 import httplib2
 import pytest
@@ -162,7 +164,9 @@ def _tool(api_call, **flags):
     def tool():
         return run_tool(api_call)
 
-    return mcp.tools["tool"]
+    # register hands MCP an async wrapper that runs the tool in a worker thread.
+    registered = mcp.tools["tool"]
+    return lambda: anyio.run(registered)
 
 
 def test_read_retries_429_honoring_retry_after(sleeps):
