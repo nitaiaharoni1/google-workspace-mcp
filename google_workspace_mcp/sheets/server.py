@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 
-from ..core import build_server, get_api, ok, register, run_tool
+from google_auth_core import InvalidArgumentError
+
+from ..core import DEFAULT_MAX_CHARS, build_server, cap_items, get_api, ok, register, run_tool
 from .sheets_api import SheetsAPI
 
 mcp = build_server(
@@ -30,19 +32,62 @@ def get_spreadsheet(account: str | None = None, spreadsheet_id: str = "", includ
     return ok(resolved, data)
 
 
+_ROWS_HINT = (
+    "Rows were cut to fit max_chars. Read the rest with a narrower A1 range that "
+    "starts next_offset rows below the start of the requested range."
+)
+
+
+def _cap_rows(value_range: dict, max_chars: int | None) -> bool:
+    """Trim value_range["values"] in place to fit max_chars; True when rows were cut."""
+    rows = value_range.get("values") or []
+    kept, meta = cap_items(rows, max_chars)
+    if not meta:
+        return False
+    value_range["values"] = kept
+    value_range.update(truncated=True, total_rows=len(rows), next_offset=meta["next_offset"])
+    return True
+
+
 @register(mcp)
-def read_range(account: str | None = None, spreadsheet_id: str = "", range: str = "", value_render_option: str = "FORMATTED_VALUE") -> dict:
-    """Read cell values from a range (A1 notation, e.g. 'Sheet1!A1:C10')."""
+def read_range(account: str | None = None, spreadsheet_id: str = "", range: str = "", value_render_option: str = "FORMATTED_VALUE", max_chars: int | None = None) -> dict:
+    """Read cell values from a range (A1 notation, e.g. 'Sheet1!A1:C10').
+
+    Rows are capped at max_chars of JSON (default 100000). When truncated=true,
+    next_offset is the number of rows returned; read the rest with a narrower range.
+    """
     api, resolved = _api(account)
     data = run_tool(lambda: api.read_range(spreadsheet_id, range, value_render_option))
+    if _cap_rows(data, max_chars):
+        return ok(resolved, data, truncated=True, hint=_ROWS_HINT)
     return ok(resolved, data)
 
 
 @register(mcp)
-def batch_read(account: str | None = None, spreadsheet_id: str = "", ranges: list[str] | None = None, value_render_option: str = "FORMATTED_VALUE") -> dict:
-    """Read cell values from multiple ranges in one request (A1 notation)."""
+def batch_read(account: str | None = None, spreadsheet_id: str = "", ranges: list[str] | None = None, value_render_option: str = "FORMATTED_VALUE", max_chars: int | None = None) -> dict:
+    """Read cell values from multiple ranges in one request (A1 notation).
+
+    All ranges share one max_chars budget of JSON (default 100000). Any range
+    cut short is marked truncated=true with total_rows and next_offset (rows
+    returned); read the rest with narrower ranges.
+    """
     api, resolved = _api(account)
     data = run_tool(lambda: api.batch_read(spreadsheet_id, ranges or [], value_render_option))
+    budget = DEFAULT_MAX_CHARS if max_chars is None else max_chars
+    if budget < 1:
+        raise InvalidArgumentError("max_chars must be at least 1")
+    truncated = False
+    for vr in data.get("valueRanges") or []:
+        if budget <= 0:
+            rows = vr.get("values") or []
+            if rows:
+                vr.update(values=[], truncated=True, total_rows=len(rows), next_offset=0)
+                truncated = True
+            continue
+        truncated |= _cap_rows(vr, budget)
+        budget -= len(json.dumps(vr.get("values") or [], default=str))
+    if truncated:
+        return ok(resolved, data, truncated=True, hint=_ROWS_HINT)
     return ok(resolved, data)
 
 

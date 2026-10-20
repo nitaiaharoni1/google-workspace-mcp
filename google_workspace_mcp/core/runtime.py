@@ -6,6 +6,7 @@ through these helpers, which is what keeps the five servers aligned.
 from __future__ import annotations
 
 import functools
+import json
 import math
 import os
 import random
@@ -55,17 +56,84 @@ _TRANSIENT_MAX_TOTAL_WAIT = 20.0
 # read tools and writes marked idempotent. Calls outside a registered tool
 # default to False and are never retried on 429/5xx.
 _retry_safe: ContextVar[bool] = ContextVar("retry_safe", default=False)
+# Default cap on what a read tool returns inline, roughly 25k tokens. Bigger
+# results waste the agent's context or get cut off by the client with no hint
+# on how to fetch the rest.
+DEFAULT_MAX_CHARS = 100_000
 
 
 def ok(account: str, data: Any, **meta: Any) -> dict:
     """Standard success envelope shared by all tools.
 
-    Extra keyword args are added to the envelope only when not None. The only
-    meta key defined today is next_page_token.
+    Extra keyword args are added to the envelope only when not None: today
+    next_page_token, and the truncation keys produced by cap_text/cap_items.
     """
     out = {"ok": True, "account": account, "data": data}
     out.update({k: v for k, v in meta.items() if v is not None})
     return out
+
+
+def _char_budget(max_chars: Optional[int]) -> int:
+    if max_chars is None:
+        return DEFAULT_MAX_CHARS
+    if max_chars < 1:
+        raise core.InvalidArgumentError("max_chars must be at least 1")
+    return max_chars
+
+
+def _check_offset(offset: int) -> None:
+    if offset < 0:
+        raise core.InvalidArgumentError("offset must be 0 or greater")
+
+
+def cap_text(
+    text: str, max_chars: Optional[int] = None, offset: int = 0, hint: str = ""
+) -> tuple[str, dict]:
+    """Return ``text[offset:offset + max_chars]`` plus envelope meta for ``ok()``.
+
+    The meta is empty when the whole text fits. Otherwise it carries
+    ``truncated`` (more text remains), ``total_chars``, ``offset``, and while
+    more remains ``next_offset`` and ``hint`` (how to get the rest).
+    """
+    limit = _char_budget(max_chars)
+    _check_offset(offset)
+    chunk = text[offset:offset + limit]
+    end = offset + len(chunk)
+    more = end < len(text)
+    if offset == 0 and not more:
+        return chunk, {}
+    meta = {"truncated": more, "total_chars": len(text), "offset": offset}
+    if more:
+        meta.update(next_offset=end, hint=hint)
+    return chunk, meta
+
+
+def cap_items(
+    items: list, max_chars: Optional[int] = None, offset: int = 0, hint: str = ""
+) -> tuple[list, dict]:
+    """Keep whole items from ``offset`` while their JSON size fits ``max_chars``.
+
+    At least one item is always kept so callers paging with ``next_offset``
+    make progress. Meta mirrors :func:`cap_text`, counting items instead of
+    characters (``total_items``).
+    """
+    limit = _char_budget(max_chars)
+    _check_offset(offset)
+    kept, used = [], 0
+    for item in items[offset:]:
+        size = len(json.dumps(item, default=str))
+        if kept and used + size > limit:
+            break
+        kept.append(item)
+        used += size
+    end = offset + len(kept)
+    more = end < len(items)
+    if offset == 0 and not more:
+        return kept, {}
+    meta = {"truncated": more, "total_items": len(items), "offset": offset}
+    if more:
+        meta.update(next_offset=end, hint=hint)
+    return kept, meta
 
 
 def get_api(

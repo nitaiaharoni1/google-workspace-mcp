@@ -1,12 +1,22 @@
 """Gmail MCP server: read, search, send, label, and manage messages."""
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
 
 from ..contacts.tools import register_contacts_tools
-from ..core import build_server, get_api, ok, register, run_tool
+from ..core import (
+    DEFAULT_MAX_CHARS,
+    build_server,
+    cap_items,
+    cap_text,
+    get_api,
+    ok,
+    register,
+    run_tool,
+)
 from ..core.paths import free_path, safe_dir, safe_path, safe_paths
 from .changes_api import GmailChangesAPI
 
@@ -81,23 +91,59 @@ def search_messages(
     return ok(resolved, page["items"], next_page_token=page.get("nextPageToken"))
 
 
+_ATTACHMENT_HINT = "Inline attachment data was dropped to fit max_chars; fetch files with download_attachment."
+
+
+def _drop_attachment_data(part: dict) -> bool:
+    """Remove inline base64 data from attachment parts (format=full); True if any was removed."""
+    dropped = False
+    body = part.get("body") or {}
+    if part.get("filename") and "data" in body:
+        del body["data"]
+        dropped = True
+    for child in part.get("parts") or []:
+        dropped |= _drop_attachment_data(child)
+    return dropped
+
+
+def _too_big(data, max_chars: int | None) -> bool:
+    return len(json.dumps(data, default=str)) > (DEFAULT_MAX_CHARS if max_chars is None else max_chars)
+
+
 @register(mcp)
 def get_message(
     account: str | None = None,
     message_id: str = "",
     format: str = "text",
+    max_chars: int | None = None,
+    offset: int = 0,
 ) -> dict:
     """Get a specific message by ID.
 
     format: text (default, readable body), full (raw MIME), metadata, minimal, or raw. Use text unless you need MIME parts.
+    Output is capped at max_chars (default 100000): for text the body and for raw
+    the base64 string page via offset/next_offset when truncated=true; for full,
+    inline attachment data is dropped (content_trimmed=true; use download_attachment).
     """
     api, resolved = _api(account)
     kind = (format or "text").strip().lower()
+    meta: dict = {}
     if kind == "text":
         data = run_tool(lambda: api.get_message_text(message_id))
+        data["body_text"], meta = cap_text(
+            data["body_text"], max_chars, offset,
+            hint="Call get_message again with offset=next_offset for more of the body.",
+        )
     else:
         data = run_tool(lambda: api.get_message(message_id, format=kind))
-    return ok(resolved, data)
+        if kind == "raw":
+            data["raw"], meta = cap_text(
+                data.get("raw") or "", max_chars, offset,
+                hint="Call get_message again with offset=next_offset, or use format=text.",
+            )
+        elif kind == "full" and _too_big(data, max_chars) and _drop_attachment_data(data.get("payload") or {}):
+            meta = {"content_trimmed": True, "hint": _ATTACHMENT_HINT}
+    return ok(resolved, data, **meta)
 
 
 @register(mcp)
@@ -123,18 +169,43 @@ def get_thread(
     account: str | None = None,
     thread_id: str = "",
     format: str = "text",
+    max_chars: int | None = None,
+    offset: int = 0,
 ) -> dict:
     """Get a whole conversation (all messages in the thread) by ID in one call.
 
     format: text (default, readable bodies), full (raw MIME), metadata, or minimal. Use text unless you need MIME parts.
+    Output is capped at max_chars (default 100000). Long threads return whole
+    messages from offset; when truncated=true, call again with offset=next_offset
+    (a message index). A single oversized body is cut (body_truncated=true; page
+    it with get_message), and format=full drops inline attachment data; either
+    sets content_trimmed=true.
     """
     api, resolved = _api(account)
     kind = (format or "text").strip().lower()
+    notes = []
     if kind == "text":
         data = run_tool(lambda: api.get_thread_text(thread_id))
+        for m in data.get("messages") or []:
+            m["body_text"], body_meta = cap_text(m["body_text"], max_chars)
+            if body_meta:
+                m.update(body_truncated=True, body_total_chars=body_meta["total_chars"])
     else:
         data = run_tool(lambda: api.get_thread(thread_id, format=kind))
-    return ok(resolved, data)
+        if kind == "full" and _too_big(data, max_chars):
+            if any([_drop_attachment_data(m.get("payload") or {}) for m in data.get("messages") or []]):
+                notes = [_ATTACHMENT_HINT]
+    data["messages"], meta = cap_items(data.get("messages") or [], max_chars, offset)
+    if any(m.get("body_truncated") for m in data["messages"]):
+        notes.append("Bodies marked body_truncated were cut; page through them with get_message and offset.")
+    if notes:
+        # Content was reduced in place; truncated stays reserved for "more messages via next_offset".
+        meta["content_trimmed"] = True
+    if meta.get("truncated"):
+        notes.append("Call get_thread again with offset=next_offset for the next messages.")
+    if notes:
+        meta["hint"] = " ".join(notes)
+    return ok(resolved, data, **meta)
 
 
 @register(mcp)

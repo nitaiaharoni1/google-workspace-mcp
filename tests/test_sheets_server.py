@@ -1866,3 +1866,46 @@ async def test_range_rule_tools_flags_and_required_params():
         assert tools[name].annotations.read_only_hint is False, name
         assert tools[name].annotations.destructive_hint is False, name
     assert set(tools["protect_range"].input_schema["required"]) == {"spreadsheet_id", "range"}
+
+
+@pytest.mark.anyio
+async def test_read_range_caps_rows(patched_server):
+    rows = [[f"r{i}xx"] for i in range(5)]  # each row serializes to 9 chars
+    patched_server.read_range.return_value = {"range": "S!A1:A5", "values": rows}
+
+    raw = await mcp.call_tool("read_range", {"spreadsheet_id": "sid", "range": "S!A1:A5", "max_chars": 20})
+    result = _parse_result(raw)
+    assert result["data"]["values"] == rows[:2]
+    assert result["data"]["total_rows"] == 5 and result["data"]["next_offset"] == 2
+    assert result["truncated"] is True and "narrower" in result["hint"]
+
+
+@pytest.mark.anyio
+async def test_read_range_small_untouched(patched_server):
+    patched_server.read_range.return_value = {"values": [["a"]]}
+    raw = await mcp.call_tool("read_range", {"spreadsheet_id": "sid", "range": "A1"})
+    assert "truncated" not in _parse_result(raw)
+
+
+@pytest.mark.anyio
+async def test_batch_read_shares_budget_across_ranges(patched_server):
+    rows = [["aaaaaa"]] * 3  # each row serializes to 10 chars
+    patched_server.batch_read.return_value = {"valueRanges": [
+        {"range": "A1:A3", "values": list(rows)},
+        {"range": "B1:B3", "values": list(rows)},
+    ]}
+    raw = await mcp.call_tool("batch_read", {
+        "spreadsheet_id": "sid", "ranges": ["A1:A3", "B1:B3"], "max_chars": 36,
+    })
+    result = _parse_result(raw)
+    first, second = result["data"]["valueRanges"]
+    assert "truncated" not in first and len(first["values"]) == 3
+    assert second["truncated"] is True and second["values"] == [] and second["next_offset"] == 0
+    assert result["truncated"] is True
+
+
+@pytest.mark.anyio
+async def test_batch_read_rejects_zero_max_chars(patched_server):
+    patched_server.batch_read.return_value = {"valueRanges": []}
+    with pytest.raises(Exception, match="max_chars"):
+        await mcp.call_tool("batch_read", {"spreadsheet_id": "sid", "ranges": ["A1"], "max_chars": 0})

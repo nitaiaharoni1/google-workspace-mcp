@@ -1,7 +1,7 @@
 """Google Drive MCP server: search, read, upload, organize, and share files."""
 from __future__ import annotations
 
-from ..core import build_server, get_api, ok, register, run_tool
+from ..core import build_server, cap_text, get_api, ok, register, run_tool
 from ..core.paths import safe_path
 from .drive_api import DriveAPI
 
@@ -140,15 +140,28 @@ def export_file(
 
 
 @register(mcp)
-def read_file_text(account: str | None = None, file_id: str = "") -> dict:
+def read_file_text(
+    account: str | None = None,
+    file_id: str = "",
+    max_chars: int | None = None,
+    offset: int = 0,
+) -> dict:
     """Read small text inline (UTF-8 binary files, or Docs/Sheets exported as text).
 
-    Content is capped at 1 MiB; larger files raise an error — use download_file or
-    export_file instead. Slides and other non-text native types are not supported.
+    Returns up to max_chars characters (default 100000) starting at offset. When
+    more remains the envelope has truncated=true and next_offset; call again with
+    offset=next_offset for the next chunk. Files over 1 MiB raise an error — use
+    download_file or export_file instead. Slides and other non-text native types
+    are not supported.
     """
     api, resolved = _api(account)
     data = run_tool(lambda: api.read_file_text(file_id))
-    return ok(resolved, data)
+    data["text"], meta = cap_text(
+        data["text"], max_chars, offset,
+        hint="Call read_file_text again with offset=next_offset, or save the whole "
+        "file with download_file/export_file.",
+    )
+    return ok(resolved, data, **meta)
 
 
 @register(mcp)

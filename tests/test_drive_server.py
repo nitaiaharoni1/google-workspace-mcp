@@ -18,6 +18,8 @@ from google_workspace_mcp.drive.drive_api import (
     REPLY_FIELDS,
     TEXT_READ_MAX_BYTES,
     DriveAPI,
+    _download_to_bytes,
+    _download_to_file,
     _resolve_export_mime,
     _resolve_upload_mimes,
 )
@@ -148,10 +150,12 @@ def test_download_file_writes_binary(monkeypatch, tmp_path):
     }
     files.get_media.return_value = MagicMock()
 
-    def fake_download(service, request):
-        return b"hello bytes"
+    def fake_download(request, path):
+        with open(path, "wb") as f:
+            f.write(b"hello bytes")
+        return 11
 
-    monkeypatch.setattr("google_workspace_mcp.drive.drive_api._download_to_bytes", fake_download)
+    monkeypatch.setattr("google_workspace_mcp.drive.drive_api._download_to_file", fake_download)
     out_path = str(tmp_path / "data.bin")
     out = api.download_file("B1", output_path=out_path)
     assert out["path"] == out_path
@@ -177,8 +181,8 @@ def test_export_file_resolves_format(monkeypatch, tmp_path):
     }
     files.export_media.return_value = MagicMock()
     monkeypatch.setattr(
-        "google_workspace_mcp.drive.drive_api._download_to_bytes",
-        lambda *a, **k: b"# md",
+        "google_workspace_mcp.drive.drive_api._download_to_file",
+        lambda request, path: 4,
     )
     out_path = str(tmp_path / "notes.md")
     out = api.export_file("D1", "markdown", output_path=out_path)
@@ -215,14 +219,76 @@ def test_read_file_text_size_cap(monkeypatch):
     svc.files.return_value = files
     files.get().execute.return_value = {
         "id": "T1", "name": "big.txt", "mimeType": "text/plain",
+        "size": str(TEXT_READ_MAX_BYTES + 1),
     }
-    files.get_media.return_value = MagicMock()
-    monkeypatch.setattr(
-        "google_workspace_mcp.drive.drive_api._download_to_bytes",
-        lambda *a, **k: b"x" * (TEXT_READ_MAX_BYTES + 1),
-    )
     with pytest.raises(ValueError, match="exceeding read_file_text cap"):
         api.read_file_text("T1")
+    files.get_media.assert_not_called()
+
+
+class _FakeDownloader:
+    """Stands in for MediaIoBaseDownload: writes CHUNKS to the target one call at a time."""
+
+    CHUNKS = [b"aaaa", b"bbbb", b"cccc"]
+
+    def __init__(self, fh, request, chunksize=None):
+        self.fh = fh
+        self.left = list(self.CHUNKS)
+
+    def next_chunk(self):
+        self.fh.write(self.left.pop(0))
+        return None, not self.left
+
+
+def test_download_to_bytes_stops_past_cap(monkeypatch):
+    monkeypatch.setattr("google_workspace_mcp.drive.drive_api.MediaIoBaseDownload", _FakeDownloader)
+    assert _download_to_bytes(MagicMock(), max_bytes=12) == b"aaaabbbbcccc"
+    with pytest.raises(ValueError, match="exceeding read_file_text cap"):
+        _download_to_bytes(MagicMock(), max_bytes=5)
+
+
+def test_download_to_file_streams_to_disk(monkeypatch, tmp_path):
+    monkeypatch.setattr("google_workspace_mcp.drive.drive_api.MediaIoBaseDownload", _FakeDownloader)
+    path = tmp_path / "out.bin"
+    assert _download_to_file(MagicMock(), str(path)) == 12
+    assert path.read_bytes() == b"aaaabbbbcccc"
+
+
+def test_download_to_file_removes_partial_file(monkeypatch, tmp_path):
+    class Failing(_FakeDownloader):
+        def next_chunk(self):
+            if len(self.left) < len(self.CHUNKS):
+                raise ConnectionError("dropped")
+            return super().next_chunk()
+
+    monkeypatch.setattr("google_workspace_mcp.drive.drive_api.MediaIoBaseDownload", Failing)
+    path = tmp_path / "out.bin"
+    with pytest.raises(ConnectionError):
+        _download_to_file(MagicMock(), str(path))
+    assert not path.exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_to_file_failure_keeps_existing_file(monkeypatch, tmp_path):
+    class Failing(_FakeDownloader):
+        def next_chunk(self):
+            raise ConnectionError("dropped")
+
+    monkeypatch.setattr("google_workspace_mcp.drive.drive_api.MediaIoBaseDownload", Failing)
+    path = tmp_path / "report.pdf"
+    path.write_bytes(b"old report")
+    with pytest.raises(ConnectionError):
+        _download_to_file(MagicMock(), str(path))
+    assert path.read_bytes() == b"old report"
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_download_to_file_replaces_existing_on_success(monkeypatch, tmp_path):
+    monkeypatch.setattr("google_workspace_mcp.drive.drive_api.MediaIoBaseDownload", _FakeDownloader)
+    path = tmp_path / "report.pdf"
+    path.write_bytes(b"old")
+    assert _download_to_file(MagicMock(), str(path)) == 12
+    assert path.read_bytes() == b"aaaabbbbcccc"
 
 
 def test_read_file_text_rejects_slides(monkeypatch):
@@ -546,10 +612,12 @@ def test_default_output_path_uses_tempdir(monkeypatch):
         "id": "B1", "name": "report.pdf", "mimeType": "application/pdf",
     }
     files.get_media.return_value = MagicMock()
-    monkeypatch.setattr(
-        "google_workspace_mcp.drive.drive_api._download_to_bytes",
-        lambda *a, **k: b"pdf",
-    )
+    def fake_download(request, path):
+        with open(path, "wb") as f:
+            f.write(b"pdf")
+        return 3
+
+    monkeypatch.setattr("google_workspace_mcp.drive.drive_api._download_to_file", fake_download)
     out = api.download_file("B1")
     assert out["path"].startswith(tempfile.gettempdir())
     assert os.path.isfile(out["path"])
@@ -914,3 +982,27 @@ async def test_upload_file_refuses_token_store(monkeypatch, store_env):
     with pytest.raises(Exception, match="token store"):
         await server.mcp.call_tool("upload_file", {"local_path": str(secret)})
     fake.upload_file.assert_not_called()
+async def test_read_file_text_pages_with_offset(monkeypatch):
+    fake = MagicMock(spec=DriveAPI)
+    fake.read_file_text.side_effect = lambda file_id: {"fileId": file_id, "text": "abcdefghij"}
+    monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
+
+    env = envelope(await server.mcp.call_tool("read_file_text", {"file_id": "T1", "max_chars": 4}))
+    assert env["data"]["text"] == "abcd"
+    assert env["truncated"] is True and env["next_offset"] == 4 and env["total_chars"] == 10
+    assert "download_file" in env["hint"]
+
+    env = envelope(await server.mcp.call_tool(
+        "read_file_text", {"file_id": "T1", "max_chars": 4, "offset": 8}))
+    assert env["data"]["text"] == "ij"
+    assert env["truncated"] is False and "next_offset" not in env
+
+
+@pytest.mark.anyio
+async def test_read_file_text_small_has_no_truncation_keys(monkeypatch):
+    fake = MagicMock(spec=DriveAPI)
+    fake.read_file_text.return_value = {"fileId": "T1", "text": "hi"}
+    monkeypatch.setattr(server, "_api", lambda account=None: (fake, "d@x.com"))
+    env = envelope(await server.mcp.call_tool("read_file_text", {"file_id": "T1"}))
+    assert env["data"]["text"] == "hi"
+    assert "truncated" not in env

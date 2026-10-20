@@ -10,7 +10,7 @@ from googleapiclient.errors import HttpError
 
 from google_workspace_mcp.core import runtime
 from google_workspace_mcp.core.paths import free_path, safe_dir, safe_path
-from google_workspace_mcp.core.runtime import ok, register, run_tool
+from google_workspace_mcp.core.runtime import cap_items, cap_text, ok, register, run_tool
 
 
 def test_ok_without_meta():
@@ -253,3 +253,39 @@ def test_retry_flag_is_reset_after_tool_raises(sleeps):
     with pytest.raises(core.NotFoundError):
         _tool(call)()
     assert runtime._retry_safe.get() is False
+def test_cap_text_fits_returns_no_meta():
+    assert cap_text("hello", 10) == ("hello", {})
+
+
+def test_cap_text_truncates_and_pages():
+    chunk, meta = cap_text("abcdefghij", 4, hint="more")
+    assert chunk == "abcd"
+    assert meta == {"truncated": True, "total_chars": 10, "offset": 0, "next_offset": 4, "hint": "more"}
+    chunk, meta = cap_text("abcdefghij", 4, offset=8)
+    assert chunk == "ij"
+    assert meta == {"truncated": False, "total_chars": 10, "offset": 8}
+
+
+def test_cap_text_default_limit():
+    chunk, meta = cap_text("x" * 100_001)
+    assert len(chunk) == 100_000 and meta["next_offset"] == 100_000
+
+
+@pytest.mark.parametrize("kwargs", [{"max_chars": 0}, {"offset": -1}])
+def test_cap_text_rejects_bad_args(kwargs):
+    with pytest.raises(core.InvalidArgumentError):
+        cap_text("abc", **kwargs)
+
+
+def test_cap_items_keeps_whole_items_and_pages():
+    items = ["aaaa", "bbbb", "cccc"]  # each serializes to 6 chars
+    kept, meta = cap_items(items, 13, hint="next")
+    assert kept == ["aaaa", "bbbb"]
+    assert meta == {"truncated": True, "total_items": 3, "offset": 0, "next_offset": 2, "hint": "next"}
+    kept, meta = cap_items(items, 13, offset=2)
+    assert kept == ["cccc"] and meta["truncated"] is False
+
+
+def test_cap_items_always_returns_one_item():
+    kept, meta = cap_items(["x" * 50, "y"], 10)
+    assert kept == ["x" * 50] and meta["next_offset"] == 1

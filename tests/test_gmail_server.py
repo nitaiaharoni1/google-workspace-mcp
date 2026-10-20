@@ -587,3 +587,103 @@ async def test_download_attachment_same_named_attachments(monkeypatch, store_env
         "download_attachment", {"message_id": "m1", "output_dir": str(tmp_path)}
     ))
     assert [f["path"] for f in data["data"]] == [str(tmp_path / "a.txt")]
+# ---------------------------------------------------------------------------
+# Output caps (max_chars / offset)
+# ---------------------------------------------------------------------------
+
+def _full_message(mid, attachment_data):
+    return {"id": mid, "payload": {"mimeType": "multipart/mixed", "parts": [
+        {"mimeType": "text/plain", "filename": "", "body": {"data": "aGk="}},
+        {"mimeType": "application/pdf", "filename": "a.pdf",
+         "body": {"attachmentId": "att1", "size": 9, "data": attachment_data}},
+    ]}}
+
+
+@pytest.mark.anyio
+async def test_get_message_text_body_pages_with_offset(monkeypatch):
+    fake, patched = make_fake_api()
+    fake.get_message_text = lambda message_id: {"id": message_id, "body_text": "abcdefghij"}
+    monkeypatch.setattr(server, "_api", patched)
+
+    data = parse_result(await server.mcp.call_tool(
+        "get_message", {"message_id": "abc", "max_chars": 4, "offset": 4}))
+    assert data["data"]["body_text"] == "efgh"
+    assert data["truncated"] is True and data["next_offset"] == 8 and data["total_chars"] == 10
+
+
+@pytest.mark.anyio
+async def test_get_message_raw_is_capped(monkeypatch):
+    fake, patched = make_fake_api()
+    fake.get_message = lambda message_id, format="full": {"id": message_id, "raw": "R" * 50}
+    monkeypatch.setattr(server, "_api", patched)
+
+    data = parse_result(await server.mcp.call_tool(
+        "get_message", {"message_id": "abc", "format": "raw", "max_chars": 20}))
+    assert data["data"]["raw"] == "R" * 20
+    assert data["next_offset"] == 20
+
+
+@pytest.mark.anyio
+async def test_get_message_full_drops_inline_attachment_data_when_too_big(monkeypatch):
+    fake, patched = make_fake_api()
+    fake.get_message = lambda message_id, format="full": _full_message(message_id, "Z" * 500)
+    monkeypatch.setattr(server, "_api", patched)
+
+    data = parse_result(await server.mcp.call_tool(
+        "get_message", {"message_id": "abc", "format": "full", "max_chars": 300}))
+    text_part, pdf_part = data["data"]["payload"]["parts"]
+    assert text_part["body"]["data"] == "aGk="
+    assert "data" not in pdf_part["body"] and pdf_part["body"]["attachmentId"] == "att1"
+    assert data["content_trimmed"] is True and "truncated" not in data
+    assert "download_attachment" in data["hint"]
+
+
+@pytest.mark.anyio
+async def test_get_message_full_small_keeps_attachment_data(monkeypatch):
+    fake, patched = make_fake_api()
+    fake.get_message = lambda message_id, format="full": _full_message(message_id, "Zm9v")
+    monkeypatch.setattr(server, "_api", patched)
+
+    data = parse_result(await server.mcp.call_tool("get_message", {"message_id": "abc", "format": "full"}))
+    assert data["data"]["payload"]["parts"][1]["body"]["data"] == "Zm9v"
+    assert "truncated" not in data
+
+
+@pytest.mark.anyio
+async def test_get_thread_pages_messages_and_cuts_long_bodies(monkeypatch):
+    fake, patched = make_fake_api()
+    fake.get_thread_text = lambda thread_id: {"id": thread_id, "messages": [
+        {"id": "m0", "body_text": "x" * 500},
+        {"id": "m1", "body_text": "short"},
+        {"id": "m2", "body_text": "short"},
+    ]}
+    monkeypatch.setattr(server, "_api", patched)
+
+    data = parse_result(await server.mcp.call_tool("get_thread", {"thread_id": "t1", "max_chars": 100}))
+    msgs = data["data"]["messages"]
+    assert [m["id"] for m in msgs] == ["m0"]
+    assert msgs[0]["body_text"] == "x" * 100
+    assert msgs[0]["body_truncated"] is True and msgs[0]["body_total_chars"] == 500
+    assert data["truncated"] is True and data["next_offset"] == 1 and data["total_items"] == 3
+    assert data["content_trimmed"] is True
+    assert "get_message" in data["hint"] and "offset=next_offset" in data["hint"]
+
+    data = parse_result(await server.mcp.call_tool(
+        "get_thread", {"thread_id": "t1", "max_chars": 100, "offset": 1}))
+    assert [m["id"] for m in data["data"]["messages"]] == ["m1", "m2"]
+    assert data["truncated"] is False
+    assert "content_trimmed" not in data and "hint" not in data
+
+
+@pytest.mark.anyio
+async def test_get_thread_full_drops_attachment_data_when_too_big(monkeypatch):
+    fake, patched = make_fake_api()
+    fake.get_thread = lambda thread_id, format="full": {
+        "id": thread_id, "messages": [_full_message("m0", "Z" * 500)]}
+    monkeypatch.setattr(server, "_api", patched)
+
+    data = parse_result(await server.mcp.call_tool(
+        "get_thread", {"thread_id": "t1", "format": "full", "max_chars": 300}))
+    assert "data" not in data["data"]["messages"][0]["payload"]["parts"][1]["body"]
+    assert data["content_trimmed"] is True and "truncated" not in data
+    assert "download_attachment" in data["hint"] and "next_offset" not in data["hint"]

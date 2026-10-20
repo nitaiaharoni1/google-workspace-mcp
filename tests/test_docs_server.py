@@ -835,3 +835,40 @@ asyncio.run(main())
     )
     assert result.returncode == 0, f"subprocess failed:\n{result.stdout}\n{result.stderr}"
     assert "OK" in result.stdout
+
+
+@pytest.mark.anyio
+async def test_read_document_truncates_with_offset(patched_docs_server):
+    patched_docs_server.get_document_text.return_value = {"documentId": "D1", "text": "abcdefgh"}
+    env = envelope(await server.mcp.call_tool(
+        "read_document", {"document_id": "D1", "max_chars": 3, "offset": 3}))
+    assert env["data"]["text"] == "def"
+    assert env["truncated"] is True and env["next_offset"] == 6 and env["total_chars"] == 8
+
+
+@pytest.mark.anyio
+async def test_read_document_as_markdown_truncates(patched_docs_server):
+    patched_docs_server.read_document_as_markdown.return_value = {"documentId": "D1", "markdown": "# T\nbody"}
+    env = envelope(await server.mcp.call_tool(
+        "read_document_as_markdown", {"document_id": "D1", "max_chars": 4}))
+    assert env["data"]["markdown"] == "# T\n"
+    assert env["truncated"] is True and env["next_offset"] == 4
+
+
+@pytest.mark.anyio
+async def test_get_document_caps_body_elements(patched_docs_server):
+    elements = [{"paragraph": {"text": "x" * 40}} for _ in range(5)]
+    patched_docs_server.get_document.return_value = {"title": "T", "body": {"content": elements}}
+    env = envelope(await server.mcp.call_tool(
+        "get_document", {"document_id": "D1", "max_chars": 150}))
+    assert env["data"]["title"] == "T"
+    assert len(env["data"]["body"]["content"]) == 2
+    assert env["truncated"] is True and env["next_offset"] == 2 and env["total_items"] == 5
+    assert "read_document_as_markdown" in env["hint"]
+
+
+@pytest.mark.anyio
+async def test_get_document_docstring_steers_to_compact_tools():
+    tools = {t.name: t for t in await server.mcp.list_tools()}
+    desc = tools["get_document"].description
+    assert "read_document_as_markdown" in desc and "get_content_map" in desc
