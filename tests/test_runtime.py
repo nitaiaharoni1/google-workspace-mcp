@@ -1,10 +1,15 @@
 """Tests for core runtime helpers."""
 from __future__ import annotations
 
-import google_auth_core as core
-import pytest
+import errno
 
-from google_workspace_mcp.core.runtime import ok, run_tool
+import google_auth_core as core
+import httplib2
+import pytest
+from googleapiclient.errors import HttpError
+
+from google_workspace_mcp.core import runtime
+from google_workspace_mcp.core.runtime import ok, register, run_tool
 
 
 def test_ok_without_meta():
@@ -50,3 +55,144 @@ def test_run_tool_reraises_google_core_error():
     with pytest.raises(core.AuthError) as exc:
         run_tool(boom)
     assert exc.value is err
+
+
+class _FakeMCP:
+    """Captures what ``register`` hands to FastMCP, i.e. what a client calls."""
+
+    def __init__(self):
+        self.tools = {}
+
+    def tool(self, annotations=None):
+        def deco(fn):
+            self.tools[fn.__name__] = fn
+            return fn
+
+        return deco
+
+
+def _http_error(status, retry_after=None):
+    headers = {"status": str(status)}
+    if retry_after is not None:
+        headers["retry-after"] = str(retry_after)
+    return HttpError(httplib2.Response(headers), b'{"error": {"message": "busy"}}')
+
+
+def _flaky(errors, result="done"):
+    """A call that raises each error in turn, then returns ``result``."""
+    calls = []
+
+    def call():
+        calls.append(1)
+        if len(calls) <= len(errors):
+            raise errors[len(calls) - 1]
+        return result
+
+    return call, calls
+
+
+@pytest.fixture
+def sleeps(monkeypatch):
+    slept = []
+    monkeypatch.setattr(runtime.time, "sleep", slept.append)
+    return slept
+
+
+def _tool(api_call, **flags):
+    mcp = _FakeMCP()
+
+    @register(mcp, **flags)
+    def tool():
+        return run_tool(api_call)
+
+    return mcp.tools["tool"]
+
+
+def test_read_retries_429_honoring_retry_after(sleeps):
+    call, calls = _flaky([_http_error(429, retry_after=3)])
+    assert _tool(call)() == "done"
+    assert len(calls) == 2
+    assert len(sleeps) == 1 and 3 <= sleeps[0] <= 4
+
+
+def test_read_retries_503_with_growing_backoff(sleeps):
+    call, calls = _flaky([_http_error(503), _http_error(503)])
+    assert _tool(call)() == "done"
+    assert len(calls) == 3
+    assert 0.5 <= sleeps[0] <= 1 and 1 <= sleeps[1] <= 2
+
+
+def test_wrapped_http_error_message_is_retried(sleeps):
+    # The Gmail/Calendar wrappers re-raise HttpError as a plain Exception.
+    call, calls = _flaky([Exception("list failed: <HttpError 502 ...>")])
+    assert _tool(call)() == "done"
+    assert len(calls) == 2
+
+
+def test_non_idempotent_write_is_not_retried(sleeps):
+    call, calls = _flaky([_http_error(429, retry_after=1)])
+    with pytest.raises(core.RateLimitError):
+        _tool(call, mutating=True)()
+    assert len(calls) == 1 and sleeps == []
+
+
+def test_idempotent_write_is_retried(sleeps):
+    call, calls = _flaky([_http_error(503)])
+    assert _tool(call, mutating=True, idempotent=True)() == "done"
+    assert len(calls) == 2
+
+
+def test_client_errors_are_not_retried(sleeps):
+    call, calls = _flaky([_http_error(404)])
+    with pytest.raises(core.NotFoundError):
+        _tool(call)()
+    assert len(calls) == 1 and sleeps == []
+
+
+def test_retry_after_beyond_budget_fails_fast(sleeps):
+    call, calls = _flaky([_http_error(429, retry_after=60)])
+    with pytest.raises(core.RateLimitError):
+        _tool(call)()
+    assert len(calls) == 1 and sleeps == []
+
+
+def test_total_backoff_is_capped(sleeps):
+    call, calls = _flaky([_http_error(503)] * 10)
+    with pytest.raises(core.UpstreamError):
+        _tool(call)()
+    assert len(calls) <= runtime._TRANSIENT_MAX_RETRIES + 1
+    assert sum(sleeps) <= runtime._TRANSIENT_MAX_TOTAL_WAIT
+
+
+def test_run_tool_outside_a_tool_does_not_retry(sleeps):
+    call, calls = _flaky([_http_error(503)])
+    with pytest.raises(core.UpstreamError):
+        run_tool(call)
+    assert len(calls) == 1
+
+
+def test_status_quoted_in_message_does_not_trigger_retry(sleeps):
+    call, calls = _flaky([core.InvalidArgumentError("bad value 'x (HTTP 503)' (HTTP 400)")])
+    with pytest.raises(core.InvalidArgumentError):
+        _tool(call)()
+    assert len(calls) == 1 and sleeps == []
+
+
+@pytest.mark.parametrize("retry_after", [float("nan"), -5.0])
+def test_malformed_retry_after_falls_back_to_backoff(sleeps, retry_after):
+    call, calls = _flaky([core.RateLimitError("slow down (HTTP 429)", retry_after=retry_after)])
+    assert _tool(call)() == "done"
+    assert 0.5 <= sleeps[0] <= 1
+
+
+def test_connect_failure_still_retried_for_writes(sleeps):
+    call, calls = _flaky([OSError(errno.ECONNREFUSED, "refused")])
+    assert _tool(call, mutating=True)() == "done"
+    assert sleeps == [runtime._CONNECT_RETRY_DELAYS[0]]
+
+
+def test_retry_flag_is_reset_after_tool_raises(sleeps):
+    call, _ = _flaky([_http_error(404)])
+    with pytest.raises(core.NotFoundError):
+        _tool(call)()
+    assert runtime._retry_safe.get() is False
