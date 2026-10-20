@@ -1114,6 +1114,10 @@ async def test_list_tools_includes_expected(patched_server):
         "edit_cell", "transform_text", "regex_replace",
         "split_column", "join_columns", "regex_extract",
         "list_comments", "add_comment", "reply_to_comment", "delete_comment",
+        # conditional formats / protected ranges / named ranges
+        "add_conditional_format", "list_conditional_formats", "delete_conditional_format",
+        "protect_range", "list_protected_ranges", "unprotect_range",
+        "add_named_range", "list_named_ranges", "update_named_range", "delete_named_range",
         # common tools
         "list_accounts", "auth_status", "whoami",
     }
@@ -1536,6 +1540,10 @@ async def main():
     assert "reply_to_comment" not in names, f"reply_to_comment should be hidden; got {names}"
     assert "delete_comment" not in names, f"delete_comment should be hidden; got {names}"
     assert "list_comments" in names, f"list_comments should be present; got {names}"
+    for hidden in ("add_conditional_format", "protect_range", "unprotect_range", "add_named_range", "delete_named_range"):
+        assert hidden not in names, f"{hidden} should be hidden; got {names}"
+    for shown in ("list_conditional_formats", "list_protected_ranges", "list_named_ranges"):
+        assert shown in names, f"{shown} should be present; got {names}"
     print("OK")
 
 asyncio.run(main())
@@ -1578,3 +1586,283 @@ class TestSheetsChartExport:
         assert req.get_header("Authorization") == "Bearer tok"
         assert "sid" in req.full_url and "oid=42" in req.full_url
         assert urlopen.call_args.kwargs["timeout"] > 0
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Conditional formats, protected ranges, named ranges
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestSheetsAPIRangesAndRules:
+    @pytest.fixture
+    def api_with_meta(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().get.return_value.execute.return_value = {
+            "sheets": [{"properties": {"sheetId": 7, "title": "Tab"}}]
+        }
+        svc.spreadsheets().batchUpdate.return_value.execute.return_value = {"replies": [{}]}
+        return api, svc
+
+    def _request(self, svc):
+        return svc.spreadsheets().batchUpdate.call_args.kwargs["body"]["requests"][0]
+
+    def test_add_conditional_format_number_greater(self, api_with_meta):
+        api, svc = api_with_meta
+        result = api.add_conditional_format("sid", "Tab!B2:B10", "number_greater", values=[100],
+                                            background_color="#FF0000", bold=True)
+        req = self._request(svc)["addConditionalFormatRule"]
+        assert req["index"] == 0
+        rule = req["rule"]
+        assert rule["ranges"] == [{"sheetId": 7, "startColumnIndex": 1, "endColumnIndex": 2,
+                                   "startRowIndex": 1, "endRowIndex": 10}]
+        assert rule["booleanRule"]["condition"] == {"type": "NUMBER_GREATER", "values": [{"userEnteredValue": "100"}]}
+        fmt = rule["booleanRule"]["format"]
+        assert fmt["backgroundColorStyle"]["rgbColor"]["red"] == 1.0
+        assert fmt["textFormat"] == {"bold": True}
+        assert result["sheet"] == "Tab" and result["index"] == 0
+
+    def test_add_conditional_format_custom_formula(self, api_with_meta):
+        api, svc = api_with_meta
+        api.add_conditional_format("sid", "Tab!A2:D10", "CUSTOM_FORMULA", values=["=$B2>100"], text_color="#00FF00")
+        cond = self._request(svc)["addConditionalFormatRule"]["rule"]["booleanRule"]["condition"]
+        assert cond == {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": "=$B2>100"}]}
+
+    def test_add_conditional_format_not_blank_has_no_values(self, api_with_meta):
+        api, svc = api_with_meta
+        api.add_conditional_format("sid", "Tab!A1:A5", "NOT_BLANK", italic=True)
+        cond = self._request(svc)["addConditionalFormatRule"]["rule"]["booleanRule"]["condition"]
+        assert cond == {"type": "NOT_BLANK"}
+
+    def test_add_conditional_format_color_scale(self, api_with_meta):
+        api, svc = api_with_meta
+        api.add_conditional_format("sid", "Tab!C2:C20", "COLOR_SCALE", min_color="#FF0000",
+                                   mid_color="#FFFF00", max_color="#00FF00", index=2)
+        req = self._request(svc)["addConditionalFormatRule"]
+        grad = req["rule"]["gradientRule"]
+        assert grad["minpoint"]["type"] == "MIN"
+        assert grad["midpoint"]["type"] == "PERCENTILE" and grad["midpoint"]["value"] == "50"
+        assert grad["maxpoint"]["colorStyle"]["rgbColor"]["green"] == 1.0
+        assert "booleanRule" not in req["rule"]
+        assert req["index"] == 2
+
+    def test_add_conditional_format_validation(self, api_with_meta):
+        api, svc = api_with_meta
+        with pytest.raises(ValueError, match="condition must be"):
+            api.add_conditional_format("sid", "Tab!A1:A5", "DATE_BEFORE", values=["x"], bold=True)
+        with pytest.raises(ValueError, match="takes 2 value"):
+            api.add_conditional_format("sid", "Tab!A1:A5", "NUMBER_BETWEEN", values=[1], bold=True)
+        with pytest.raises(ValueError, match="needs background_color"):
+            api.add_conditional_format("sid", "Tab!A1:A5", "TEXT_CONTAINS", values=["x"])
+        svc.spreadsheets().batchUpdate.assert_not_called()
+
+    def test_list_conditional_formats(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().get.return_value.execute.return_value = {"sheets": [
+            {"properties": {"sheetId": 7, "title": "Tab"}, "conditionalFormats": [
+                {"ranges": [{"sheetId": 7, "startColumnIndex": 1, "endColumnIndex": 2,
+                             "startRowIndex": 1, "endRowIndex": 10}],
+                 "booleanRule": {"condition": {"type": "NOT_BLANK"}, "format": {}}},
+                {"ranges": [{"sheetId": 7, "startColumnIndex": 0, "endColumnIndex": 3}], "gradientRule": {}},
+            ]},
+            {"properties": {"sheetId": 8, "title": "Other"}, "conditionalFormats": [{"ranges": [{"sheetId": 8}]}]},
+        ]}
+        result = api.list_conditional_formats("sid", sheet="Tab")
+        svc.spreadsheets().get.assert_called_with(
+            spreadsheetId="sid", fields="sheets(properties(sheetId,title),conditionalFormats)"
+        )
+        rules = result["conditionalFormats"]
+        assert [r["index"] for r in rules] == [0, 1]
+        assert rules[0]["ranges"] == ["'Tab'!B2:B10"]
+        assert rules[0]["booleanRule"]["condition"]["type"] == "NOT_BLANK"
+        assert rules[1]["ranges"] == ["'Tab'!A:C"]
+        assert "gradientRule" in rules[1]
+
+    def test_delete_conditional_format(self, api_with_meta):
+        api, svc = api_with_meta
+        api.delete_conditional_format("sid", "Tab", 3)
+        assert self._request(svc) == {"deleteConditionalFormatRule": {"sheetId": 7, "index": 3}}
+
+    def test_delete_conditional_format_rejects_a1(self, api_with_meta):
+        api, svc = api_with_meta
+        with pytest.raises(ValueError, match="sheet title"):
+            api.delete_conditional_format("sid", "Tab!A1", 0)
+
+    def test_protect_range_a1_with_editors(self, api_with_meta):
+        api, svc = api_with_meta
+        svc.spreadsheets().batchUpdate.return_value.execute.return_value = {
+            "replies": [{"addProtectedRange": {"protectedRange": {"protectedRangeId": 42}}}]
+        }
+        result = api.protect_range("sid", "Tab!A1:B2", description="Totals", editors=["a@x.com"])
+        pr = self._request(svc)["addProtectedRange"]["protectedRange"]
+        assert pr == {
+            "range": {"sheetId": 7, "startColumnIndex": 0, "endColumnIndex": 2, "startRowIndex": 0, "endRowIndex": 2},
+            "warningOnly": False, "description": "Totals", "editors": {"users": ["a@x.com"]},
+        }
+        assert result["protectedRangeId"] == 42
+
+    def test_protect_whole_sheet_warning_only(self, api_with_meta):
+        api, svc = api_with_meta
+        api.protect_range("sid", "Tab", warning_only=True)
+        pr = self._request(svc)["addProtectedRange"]["protectedRange"]
+        assert pr == {"range": {"sheetId": 7}, "warningOnly": True}
+
+    def test_protect_range_rejects_editors_with_warning_only(self, api_with_meta):
+        api, svc = api_with_meta
+        with pytest.raises(ValueError, match="warning_only"):
+            api.protect_range("sid", "Tab", warning_only=True, editors=["a@x.com"])
+        svc.spreadsheets().batchUpdate.assert_not_called()
+
+    def test_unknown_bare_sheet_name_raises(self, api_with_meta):
+        api, svc = api_with_meta
+        with pytest.raises(ValueError, match="unknown sheet 'Sheet9'"):
+            api.protect_range("sid", "Sheet9")
+        svc.spreadsheets().batchUpdate.assert_not_called()
+
+    def test_quoted_sheet_title_with_apostrophe(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().get.return_value.execute.return_value = {
+            "sheets": [{"properties": {"sheetId": 3, "title": "it's"}}]
+        }
+        assert api._grid_or_sheet("sid", "'it''s'") == {"sheetId": 3}
+        assert api._grid_or_sheet("sid", "B2:C3")["startColumnIndex"] == 1
+
+    def test_list_protected_ranges(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().get.return_value.execute.return_value = {"sheets": [
+            {"properties": {"sheetId": 7, "title": "Tab"}, "protectedRanges": [
+                {"protectedRangeId": 1, "range": {"sheetId": 7}, "warningOnly": True},
+                {"protectedRangeId": 2, "description": "Hdr",
+                 "range": {"sheetId": 7, "startRowIndex": 0, "endRowIndex": 1},
+                 "editors": {"users": ["a@x.com"]}, "requestingUserCanEdit": True},
+            ]},
+        ]}
+        result = api.list_protected_ranges("sid")["protectedRanges"]
+        assert result[0]["protectedRangeId"] == 1 and result[0]["range"] == "'Tab'" and result[0]["warningOnly"] is True
+        assert result[1]["range"] == "'Tab'!1:1"
+        assert result[1]["editors"] == {"users": ["a@x.com"]}
+        assert result[1]["description"] == "Hdr"
+
+    def test_unprotect_range(self, api_with_meta):
+        api, svc = api_with_meta
+        api.unprotect_range("sid", 42)
+        assert self._request(svc) == {"deleteProtectedRange": {"protectedRangeId": 42}}
+
+    def test_add_named_range(self, api_with_meta):
+        api, svc = api_with_meta
+        svc.spreadsheets().batchUpdate.return_value.execute.return_value = {
+            "replies": [{"addNamedRange": {"namedRange": {"namedRangeId": "nr1", "name": "Totals"}}}]
+        }
+        result = api.add_named_range("sid", "Totals", "Tab!D2:D10")
+        nr = self._request(svc)["addNamedRange"]["namedRange"]
+        assert nr == {"name": "Totals", "range": {"sheetId": 7, "startColumnIndex": 3, "endColumnIndex": 4,
+                                                  "startRowIndex": 1, "endRowIndex": 10}}
+        assert result["namedRangeId"] == "nr1"
+
+    def test_list_named_ranges_handles_omitted_sheet_id(self, sheets_api):
+        api, svc = sheets_api
+        svc.spreadsheets().get.return_value.execute.return_value = {
+            "sheets": [{"properties": {"sheetId": 0, "title": "Sheet1"}}, {"properties": {"sheetId": 7, "title": "Tab"}}],
+            "namedRanges": [
+                {"namedRangeId": "a", "name": "First", "range": {"startColumnIndex": 0, "endColumnIndex": 1,
+                                                                 "startRowIndex": 0, "endRowIndex": 1}},
+                {"namedRangeId": "b", "name": "Data", "range": {"sheetId": 7, "startColumnIndex": 0,
+                                                                "endColumnIndex": 2, "startRowIndex": 1}},
+            ],
+        }
+        result = api.list_named_ranges("sid")["namedRanges"]
+        assert result == [
+            {"namedRangeId": "a", "name": "First", "range": "'Sheet1'!A1"},
+            {"namedRangeId": "b", "name": "Data", "range": "'Tab'!A2:B"},
+        ]
+
+    def test_update_named_range(self, api_with_meta):
+        api, svc = api_with_meta
+        api.update_named_range("sid", "nr1", name="Renamed", range="Tab")
+        assert self._request(svc) == {"updateNamedRange": {
+            "namedRange": {"namedRangeId": "nr1", "name": "Renamed", "range": {"sheetId": 7}},
+            "fields": "name,range",
+        }}
+
+    def test_update_named_range_requires_a_change(self, api_with_meta):
+        api, _ = api_with_meta
+        with pytest.raises(ValueError, match="name or range"):
+            api.update_named_range("sid", "nr1")
+
+    def test_delete_named_range(self, api_with_meta):
+        api, svc = api_with_meta
+        api.delete_named_range("sid", "nr1")
+        assert self._request(svc) == {"deleteNamedRange": {"namedRangeId": "nr1"}}
+
+
+@pytest.mark.anyio
+async def test_add_conditional_format_tool(patched_server):
+    patched_server.add_conditional_format.return_value = {"sheet": "Tab", "index": 0, "replies": []}
+    raw = await mcp.call_tool("add_conditional_format", {
+        "spreadsheet_id": "sid", "range": "Tab!A1:A9", "condition": "TEXT_CONTAINS",
+        "values": ["late"], "background_color": "#FFCCCC",
+    })
+    await mcp.call_tool("add_conditional_format", {
+        "spreadsheet_id": "sid", "range": "Tab!B1:B9", "condition": "NUMBER_GREATER",
+        "values": [100], "bold": True,
+    })
+    assert patched_server.add_conditional_format.call_args_list[1].args[3] == [100]
+    payload = _parse_result(raw)
+    assert payload["ok"] is True and payload["account"] == "test@x.com"
+    patched_server.add_conditional_format.assert_any_call(
+        "sid", "Tab!A1:A9", "TEXT_CONTAINS", ["late"], "#FFCCCC", None, None, None,
+        "#FFFFFF", None, "#57BB8A", 0,
+    )
+
+
+@pytest.mark.anyio
+async def test_list_and_delete_conditional_format_tools(patched_server):
+    patched_server.list_conditional_formats.return_value = {"conditionalFormats": []}
+    patched_server.delete_conditional_format.return_value = {"replies": [{}]}
+    assert _parse_result(await mcp.call_tool("list_conditional_formats", {"spreadsheet_id": "sid"}))["ok"] is True
+    patched_server.list_conditional_formats.assert_called_once_with("sid", None)
+    await mcp.call_tool("delete_conditional_format", {"spreadsheet_id": "sid", "sheet": "Tab", "index": 1})
+    patched_server.delete_conditional_format.assert_called_once_with("sid", "Tab", 1)
+
+
+@pytest.mark.anyio
+async def test_protected_range_tools(patched_server):
+    patched_server.protect_range.return_value = {"protectedRangeId": 5, "replies": []}
+    patched_server.list_protected_ranges.return_value = {"protectedRanges": []}
+    patched_server.unprotect_range.return_value = {"replies": [{}]}
+    payload = _parse_result(await mcp.call_tool("protect_range", {
+        "spreadsheet_id": "sid", "range": "Tab", "editors": ["a@x.com"],
+    }))
+    assert payload["data"]["protectedRangeId"] == 5
+    patched_server.protect_range.assert_called_once_with("sid", "Tab", None, False, ["a@x.com"])
+    await mcp.call_tool("list_protected_ranges", {"spreadsheet_id": "sid"})
+    patched_server.list_protected_ranges.assert_called_once_with("sid")
+    await mcp.call_tool("unprotect_range", {"spreadsheet_id": "sid", "protected_range_id": 5})
+    patched_server.unprotect_range.assert_called_once_with("sid", 5)
+
+
+@pytest.mark.anyio
+async def test_named_range_tools(patched_server):
+    patched_server.add_named_range.return_value = {"namedRangeId": "nr1", "name": "Totals", "replies": []}
+    patched_server.list_named_ranges.return_value = {"namedRanges": []}
+    patched_server.update_named_range.return_value = {"replies": [{}]}
+    patched_server.delete_named_range.return_value = {"replies": [{}]}
+    await mcp.call_tool("add_named_range", {"spreadsheet_id": "sid", "name": "Totals", "range": "Tab!D2:D9"})
+    patched_server.add_named_range.assert_called_once_with("sid", "Totals", "Tab!D2:D9")
+    await mcp.call_tool("list_named_ranges", {"spreadsheet_id": "sid"})
+    patched_server.list_named_ranges.assert_called_once_with("sid")
+    await mcp.call_tool("update_named_range", {"spreadsheet_id": "sid", "named_range_id": "nr1", "name": "T2"})
+    patched_server.update_named_range.assert_called_once_with("sid", "nr1", "T2", None)
+    await mcp.call_tool("delete_named_range", {"spreadsheet_id": "sid", "named_range_id": "nr1"})
+    patched_server.delete_named_range.assert_called_once_with("sid", "nr1")
+
+
+@pytest.mark.anyio
+async def test_range_rule_tools_flags_and_required_params():
+    tools = {t.name: t for t in await mcp.list_tools()}
+    for name in ("delete_conditional_format", "unprotect_range", "delete_named_range"):
+        assert "destructive" in (tools[name].description or "").lower(), name
+    for name in ("list_conditional_formats", "list_protected_ranges", "list_named_ranges"):
+        assert tools[name].annotations.readOnlyHint is True, name
+    for name in ("add_conditional_format", "protect_range", "add_named_range", "update_named_range"):
+        assert tools[name].annotations.readOnlyHint is False, name
+        assert tools[name].annotations.destructiveHint is False, name
+    assert set(tools["protect_range"].inputSchema["required"]) == {"spreadsheet_id", "range"}

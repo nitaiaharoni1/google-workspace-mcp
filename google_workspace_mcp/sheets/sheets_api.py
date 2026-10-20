@@ -15,6 +15,14 @@ CELL_PADDING_PX = 14
 CHART_IMAGE_TIMEOUT_SECONDS = 30
 _CHART_TYPES = frozenset({"COLUMN", "BAR", "LINE", "AREA", "PIE"})
 _STACKED_CHART_TYPES = frozenset({"COLUMN", "BAR", "AREA"})
+_BARE_CELLS_RE = re.compile(r"^[A-Za-z]{0,3}\d*(:[A-Za-z]{0,3}\d*)?$")
+# Boolean conditional-format condition types -> number of values each takes.
+_CF_CONDITIONS = {
+    "NUMBER_GREATER": 1, "NUMBER_GREATER_THAN_EQ": 1, "NUMBER_LESS": 1, "NUMBER_LESS_THAN_EQ": 1,
+    "NUMBER_EQ": 1, "NUMBER_NOT_EQ": 1, "NUMBER_BETWEEN": 2, "NUMBER_NOT_BETWEEN": 2,
+    "TEXT_CONTAINS": 1, "TEXT_NOT_CONTAINS": 1, "TEXT_STARTS_WITH": 1, "TEXT_ENDS_WITH": 1, "TEXT_EQ": 1,
+    "BLANK": 0, "NOT_BLANK": 0, "CUSTOM_FORMULA": 1,
+}
 
 
 def _col_to_index(letters):
@@ -397,12 +405,11 @@ class SheetsAPI:
         if all_sheets:
             fr["allSheets"] = True
         elif range:
-            meta = self.get_spreadsheet(spreadsheet_id)
-            titles = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
-            if "!" not in range and range in titles:
-                fr["sheetId"] = titles[range]
+            grid = self._grid_or_sheet(spreadsheet_id, range)
+            if set(grid) == {"sheetId"}:
+                fr["sheetId"] = grid["sheetId"]
             else:
-                fr["range"] = self._a1_to_grid_range(spreadsheet_id, range, meta)
+                fr["range"] = grid
         else:
             raise ValueError("find_replace requires range or all_sheets=True")
         return self._batch(spreadsheet_id, [{"findReplace": fr}])
@@ -1056,3 +1063,169 @@ class SheetsAPI:
         return self.service.spreadsheets().batchUpdate(
             spreadsheetId=spreadsheet_id, body={"requests": [req]}
         ).execute()
+
+    # --- conditional formats, protected ranges, named ranges ---
+    def _get_fields(self, spreadsheet_id, fields):
+        return self.service.spreadsheets().get(spreadsheetId=spreadsheet_id, fields=fields).execute()
+
+    def _grid_or_sheet(self, spreadsheet_id, a1, meta=None):
+        """GridRange for an A1 range, or {"sheetId": id} (the whole sheet) for a bare sheet title."""
+        if meta is None:
+            meta = self.get_spreadsheet(spreadsheet_id)
+        titles = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta.get("sheets", [])}
+        if "!" not in a1:
+            title = a1.strip("'\"").replace("''", "'")
+            if title in titles:
+                return {"sheetId": titles[title]}
+            # Without this, a typo like "Sheet9" parses as column SHEET row 9 on the first sheet.
+            if not _BARE_CELLS_RE.match(a1):
+                raise ValueError(f"unknown sheet {a1!r}; sheets are {sorted(titles)}")
+        return self._a1_to_grid_range(spreadsheet_id, a1, meta)
+
+    def _grid_to_a1(self, sheet_title, grid):
+        sc, ec = grid.get("startColumnIndex"), grid.get("endColumnIndex")
+        sr, er = grid.get("startRowIndex"), grid.get("endRowIndex")
+        has_cols = sc is not None or ec is not None
+        has_rows = sr is not None or er is not None
+        if not has_cols and not has_rows:
+            return self._quoted_sheet_range(sheet_title, "")[:-1]
+        start = (_index_to_col(sc or 0) if has_cols else "") + (str((sr or 0) + 1) if has_rows else "")
+        end = (_index_to_col(ec - 1) if ec is not None else "") + (str(er) if er is not None else "")
+        single_cell = has_cols and has_rows and start == end
+        return self._quoted_sheet_range(sheet_title, start if single_cell else f"{start}:{end}")
+
+    def add_conditional_format(self, spreadsheet_id, range, condition, values=None, background_color=None,
+                               text_color=None, bold=None, italic=None, min_color="#FFFFFF", mid_color=None,
+                               max_color="#57BB8A", index=0):
+        condition = (condition or "").upper()
+        if condition != "COLOR_SCALE" and condition not in _CF_CONDITIONS:
+            raise ValueError(f"condition must be COLOR_SCALE or one of {sorted(_CF_CONDITIONS)}")
+        values = [str(v) for v in (values or [])]
+        if condition == "COLOR_SCALE":
+            gradient = {
+                "minpoint": {"type": "MIN", "colorStyle": self._hex_to_color_style(min_color)},
+                "maxpoint": {"type": "MAX", "colorStyle": self._hex_to_color_style(max_color)},
+            }
+            if mid_color:
+                gradient["midpoint"] = {
+                    "type": "PERCENTILE", "value": "50", "colorStyle": self._hex_to_color_style(mid_color),
+                }
+            rule = {"gradientRule": gradient}
+        else:
+            expected = _CF_CONDITIONS[condition]
+            if len(values) != expected:
+                raise ValueError(f"{condition} takes {expected} value(s), got {len(values)}")
+            fmt = {}
+            text_format = {}
+            if bold is not None:
+                text_format["bold"] = bold
+            if italic is not None:
+                text_format["italic"] = italic
+            if text_color is not None:
+                text_format["foregroundColorStyle"] = self._hex_to_color_style(text_color)
+            if text_format:
+                fmt["textFormat"] = text_format
+            if background_color is not None:
+                fmt["backgroundColorStyle"] = self._hex_to_color_style(background_color)
+            if not fmt:
+                raise ValueError("conditional format needs background_color, text_color, bold, or italic")
+            cond = {"type": condition}
+            if values:
+                cond["values"] = [{"userEnteredValue": v} for v in values]
+            rule = {"booleanRule": {"condition": cond, "format": fmt}}
+        sheet_name, _, grid, _, _, _, _ = self._resolve_a1(spreadsheet_id, range)
+        rule["ranges"] = [grid]
+        result = self._batch(spreadsheet_id, [{"addConditionalFormatRule": {"rule": rule, "index": index}}])
+        return {"sheet": sheet_name, "index": index, "replies": result.get("replies", [])}
+
+    def list_conditional_formats(self, spreadsheet_id, sheet=None):
+        meta = self._get_fields(spreadsheet_id, "sheets(properties(sheetId,title),conditionalFormats)")
+        out = []
+        for s in meta.get("sheets", []):
+            title = s["properties"]["title"]
+            if sheet and title != sheet:
+                continue
+            for i, rule in enumerate(s.get("conditionalFormats", [])):
+                entry = {"sheet": title, "index": i,
+                         "ranges": [self._grid_to_a1(title, g) for g in rule.get("ranges", [])]}
+                entry.update({k: v for k, v in rule.items() if k != "ranges"})
+                out.append(entry)
+        return {"conditionalFormats": out}
+
+    def delete_conditional_format(self, spreadsheet_id, sheet, index):
+        grid = self._grid_or_sheet(spreadsheet_id, sheet)
+        if set(grid) != {"sheetId"}:
+            raise ValueError(f"sheet must be a sheet title, got {sheet!r}")
+        return self._batch(spreadsheet_id, [{"deleteConditionalFormatRule": {
+            "sheetId": grid["sheetId"], "index": index,
+        }}])
+
+    def protect_range(self, spreadsheet_id, range, description=None, warning_only=False, editors=None):
+        # The API rejects editors on a warning-only range; fail before the round trip.
+        if warning_only and editors:
+            raise ValueError("editors cannot be set when warning_only=True")
+        protected = {"range": self._grid_or_sheet(spreadsheet_id, range), "warningOnly": warning_only}
+        if description:
+            protected["description"] = description
+        if editors:
+            protected["editors"] = {"users": list(editors)}
+        result = self._batch(spreadsheet_id, [{"addProtectedRange": {"protectedRange": protected}}])
+        replies = result.get("replies") or [{}]
+        pr = replies[0].get("addProtectedRange", {}).get("protectedRange", {})
+        return {"protectedRangeId": pr.get("protectedRangeId"), "replies": replies}
+
+    def list_protected_ranges(self, spreadsheet_id):
+        meta = self._get_fields(spreadsheet_id, "sheets(properties(sheetId,title),protectedRanges)")
+        out = []
+        for s in meta.get("sheets", []):
+            title = s["properties"]["title"]
+            for pr in s.get("protectedRanges", []):
+                out.append({
+                    "protectedRangeId": pr.get("protectedRangeId"),
+                    "range": self._grid_to_a1(title, pr.get("range", {})),
+                    "description": pr.get("description"),
+                    "warningOnly": pr.get("warningOnly", False),
+                    "editors": pr.get("editors", {}),
+                    "requestingUserCanEdit": pr.get("requestingUserCanEdit"),
+                })
+        return {"protectedRanges": out}
+
+    def unprotect_range(self, spreadsheet_id, protected_range_id):
+        return self._batch(spreadsheet_id, [{"deleteProtectedRange": {"protectedRangeId": protected_range_id}}])
+
+    def add_named_range(self, spreadsheet_id, name, range):
+        grid = self._grid_or_sheet(spreadsheet_id, range)
+        result = self._batch(spreadsheet_id, [{"addNamedRange": {"namedRange": {"name": name, "range": grid}}}])
+        replies = result.get("replies") or [{}]
+        nr = replies[0].get("addNamedRange", {}).get("namedRange", {})
+        return {"namedRangeId": nr.get("namedRangeId"), "name": name, "replies": replies}
+
+    def list_named_ranges(self, spreadsheet_id):
+        meta = self._get_fields(spreadsheet_id, "namedRanges,sheets(properties(sheetId,title))")
+        # The API omits sheetId when it is 0 (the default first sheet).
+        titles = {s["properties"].get("sheetId", 0): s["properties"]["title"] for s in meta.get("sheets", [])}
+        out = []
+        for nr in meta.get("namedRanges", []):
+            grid = nr.get("range", {})
+            title = titles.get(grid.get("sheetId", 0), "")
+            out.append({"namedRangeId": nr.get("namedRangeId"), "name": nr.get("name"),
+                        "range": self._grid_to_a1(title, grid)})
+        return {"namedRanges": out}
+
+    def update_named_range(self, spreadsheet_id, named_range_id, name=None, range=None):
+        named = {"namedRangeId": named_range_id}
+        fields = []
+        if name:
+            named["name"] = name
+            fields.append("name")
+        if range:
+            named["range"] = self._grid_or_sheet(spreadsheet_id, range)
+            fields.append("range")
+        if not fields:
+            raise ValueError("update_named_range requires name or range")
+        return self._batch(spreadsheet_id, [{"updateNamedRange": {
+            "namedRange": named, "fields": ",".join(fields),
+        }}])
+
+    def delete_named_range(self, spreadsheet_id, named_range_id):
+        return self._batch(spreadsheet_id, [{"deleteNamedRange": {"namedRangeId": named_range_id}}])

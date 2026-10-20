@@ -9,7 +9,7 @@ identically and support:
 - **Multiple accounts in parallel**: every tool takes an `account` argument
   (email or alias). Calls for different accounts use separate, cached clients and
   never interfere.
-- **Many operations**: ~43 Gmail tools, ~26 Calendar tools, ~55 Sheets tools (incl. text editing),
+- **Many operations**: ~43 Gmail tools, ~26 Calendar tools, ~65 Sheets tools (incl. text editing),
   ~40 Docs tools, ~29 Drive tools, plus shared `list_accounts` / `whoami` /
   `auth_status` on every server.
 
@@ -47,6 +47,11 @@ runs the Google call through shared error mapping, and returns
   table (or banded range) in one call; `optimize_layout` sizes every column to its
   content with a width cap, wraps only what must wrap, and auto-fits row heights.
   Header freezing is opt-in.
+- **Rules and guards without raw batch_update**: `add_conditional_format` (value
+  comparisons, text contains, custom formula, color scale), `list_conditional_formats`,
+  `delete_conditional_format`; `protect_range` (a range or a whole sheet, editors or
+  warning-only), `list_protected_ranges`, `unprotect_range`; and `add_named_range`,
+  `list_named_ranges`, `update_named_range`, `delete_named_range`.
 
 ### Contact lookup (`gmail-mcp`, `gcal-mcp`)
 

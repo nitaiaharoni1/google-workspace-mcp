@@ -139,6 +139,45 @@ def main() -> int:
         vals = [r[0] for r in c.get("values", []) if r]
         check("transform_text upper-cased Status", all(v == v.upper() for v in vals))
 
+        print("\n16. conditional formats (highlight Score > 6, color scale on Total)")
+        api.add_conditional_format(sheet_id, "Sheet1!B2:B5", "NUMBER_GREATER", values=[6], background_color="#C6EFCE")
+        api.add_conditional_format(sheet_id, "Sheet1!D2:D5", "COLOR_SCALE", index=1)
+        cfs = api.list_conditional_formats(sheet_id, sheet="Sheet1")["conditionalFormats"]
+        check("two conditional formats listed", len(cfs) == 2, str(cfs))
+        check("first rule covers B2:B5", cfs and cfs[0]["ranges"] == ["'Sheet1'!B2:B5"], str(cfs[:1]))
+        api.delete_conditional_format(sheet_id, "Sheet1", 1)
+        cfs = api.list_conditional_formats(sheet_id, sheet="Sheet1")["conditionalFormats"]
+        check("delete_conditional_format left one rule", len(cfs) == 1 and "booleanRule" in cfs[0], str(cfs))
+
+        print("\n17. protected ranges (header row + warning-only sheet)")
+        pr = api.protect_range(sheet_id, "Sheet1!A1:D1", description="Header")
+        pr_id = pr.get("protectedRangeId")
+        check("protect_range returned protectedRangeId", pr_id is not None)
+        api.protect_range(sheet_id, "BandingTest", warning_only=True)
+        prs = api.list_protected_ranges(sheet_id)["protectedRanges"]
+        check("two protected ranges listed", len(prs) == 2, str(prs))
+        check("whole-sheet protection is warning-only",
+              any(p["range"] == "'BandingTest'" and p["warningOnly"] for p in prs), str(prs))
+        if pr_id is not None:
+            api.unprotect_range(sheet_id, pr_id)
+            prs = api.list_protected_ranges(sheet_id)["protectedRanges"]
+            check("unprotect_range removed header protection", all(p["protectedRangeId"] != pr_id for p in prs))
+
+        print("\n18. named ranges (add, use in a formula, update, delete)")
+        nr = api.add_named_range(sheet_id, "Scores", "Sheet1!B2:B5")
+        nr_id = nr.get("namedRangeId")
+        check("add_named_range returned namedRangeId", nr_id is not None)
+        api.write_formulas(sheet_id, "Sheet1!F1", [["=SUM(Scores)"]])
+        total = api.read_range(sheet_id, "Sheet1!F1").get("values", [[""]])[0][0]
+        check("formula using named range computes 26", str(total) == "26", str(total))
+        if nr_id is not None:
+            api.update_named_range(sheet_id, nr_id, name="ScoresTop", range="Sheet1!B2:B3")
+            nrs = api.list_named_ranges(sheet_id)["namedRanges"]
+            check("update_named_range renamed and moved",
+                  any(n["name"] == "ScoresTop" and n["range"] == "'Sheet1'!B2:B3" for n in nrs), str(nrs))
+            api.delete_named_range(sheet_id, nr_id)
+            check("delete_named_range removed it", not api.list_named_ranges(sheet_id)["namedRanges"])
+
     except Exception as exc:
         print(f"\n  ✗ EXCEPTION: {exc}")
         traceback.print_exc()
