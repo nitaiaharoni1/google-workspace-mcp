@@ -52,8 +52,9 @@ COMMENT_FIELDS = (
 COMMENT_LIST_FIELDS = f"nextPageToken, comments({COMMENT_FIELDS})"
 REPLY_FIELDS = "id,content,author(displayName),createdTime,modifiedTime,action,deleted"
 
-# Max bytes returned inline by read_file_text (1 MiB).
+# Max bytes read_file_text will download (1 MiB); max_chars/offset page through it.
 TEXT_READ_MAX_BYTES = 1_048_576
+DOWNLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 
 # format alias -> export mimeType, keyed by source Google Apps mimeType.
 EXPORT_FORMATS: dict[str, dict[str, str]] = {
@@ -156,13 +157,41 @@ def normalize_drive_change(change):
     }
 
 
-def _download_to_bytes(service, request) -> bytes:
+def _download_to_bytes(request, max_bytes: int) -> bytes:
+    """Download into memory, giving up as soon as the content passes max_bytes."""
     buf = io.BytesIO()
-    downloader = MediaIoBaseDownload(buf, request)
+    downloader = MediaIoBaseDownload(buf, request, chunksize=DOWNLOAD_CHUNK_BYTES)
     done = False
     while not done:
         _, done = downloader.next_chunk()
+        if buf.tell() > max_bytes:
+            raise ValueError(
+                f"file content is over {max_bytes} bytes, exceeding read_file_text cap; "
+                "use download_file or export_file instead"
+            )
     return buf.getvalue()
+
+
+def _download_to_file(request, path: str) -> int:
+    """Stream a download straight to disk so big files never sit in memory.
+
+    Writes to a temp file next to ``path`` and renames it into place only on
+    success, so a failed download never truncates or deletes an existing file.
+    """
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)), suffix=".part")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            downloader = MediaIoBaseDownload(f, request, chunksize=DOWNLOAD_CHUNK_BYTES)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+            size = f.tell()
+        os.replace(tmp, path)
+        return size
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
 
 
 class DriveAPI:
@@ -267,10 +296,8 @@ class DriveAPI:
             if out_dir:
                 os.makedirs(out_dir, exist_ok=True)
         request = self._files().get_media(**self._all_drives(fileId=file_id))
-        data = _download_to_bytes(self.service, request)
-        with open(output_path, "wb") as f:
-            f.write(data)
-        return {"path": output_path, "bytes": len(data), "name": meta.get("name"), "mimeType": mime}
+        size = _download_to_file(request, output_path)
+        return {"path": output_path, "bytes": size, "name": meta.get("name"), "mimeType": mime}
 
     def export_file(self, file_id: str, fmt: str, output_path: str | None = None):
         meta = self.get_file(file_id)
@@ -284,12 +311,10 @@ class DriveAPI:
             if out_dir:
                 os.makedirs(out_dir, exist_ok=True)
         request = self._files().export_media(fileId=file_id, mimeType=export_mime)
-        data = _download_to_bytes(self.service, request)
-        with open(output_path, "wb") as f:
-            f.write(data)
+        size = _download_to_file(request, output_path)
         return {
             "path": output_path,
-            "bytes": len(data),
+            "bytes": size,
             "name": meta.get("name"),
             "sourceMimeType": source_mime,
             "exportMimeType": export_mime,
@@ -310,15 +335,14 @@ class DriveAPI:
                     f"read_file_text cannot extract text from {mime!r}; use export_file"
                 )
             request = self._files().export_media(fileId=file_id, mimeType=export_mime)
-            data = _download_to_bytes(self.service, request)
         else:
+            if int(meta.get("size") or 0) > max_bytes:
+                raise ValueError(
+                    f"file is {meta['size']} bytes, exceeding read_file_text cap of {max_bytes}; "
+                    "use download_file or export_file instead"
+                )
             request = self._files().get_media(**self._all_drives(fileId=file_id))
-            data = _download_to_bytes(self.service, request)
-        if len(data) > max_bytes:
-            raise ValueError(
-                f"file content is {len(data)} bytes, exceeding read_file_text cap of {max_bytes}; "
-                "use download_file or export_file instead"
-            )
+        data = _download_to_bytes(request, max_bytes)
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError as exc:

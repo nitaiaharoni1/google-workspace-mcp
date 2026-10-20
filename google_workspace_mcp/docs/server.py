@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from ..core import build_server, get_api, ok, register, run_tool
+from ..core import build_server, cap_items, cap_text, get_api, ok, register, run_tool
 from .docs_api import DocsAPI
 
 mcp = build_server(
@@ -22,24 +22,71 @@ def _api(account=None):
 
 # --- read ---
 @register(mcp)
-def get_document(account: str | None = None, document_id: str = "") -> dict:
-    """Get a document's full structure/metadata (title, body content as JSON)."""
+def get_document(
+    account: str | None = None,
+    document_id: str = "",
+    max_chars: int | None = None,
+    offset: int = 0,
+) -> dict:
+    """Get a document's raw Docs API JSON (title, body content, styles). Large and verbose.
+
+    To read a doc prefer read_document_as_markdown; to find indices for edits
+    prefer get_content_map. Body content is capped at max_chars (default 100000)
+    of JSON; when truncated=true, call again with offset=next_offset (a body
+    element index) for the next elements.
+    """
     api, resolved = _api(account)
-    return ok(resolved, run_tool(lambda: api.get_document(document_id)))
+    data = run_tool(lambda: api.get_document(document_id))
+    body = data.get("body") or {}
+    body["content"], meta = cap_items(
+        body.get("content") or [], max_chars, offset,
+        hint="Call get_document again with offset=next_offset, or use "
+        "read_document_as_markdown / get_content_map for a compact view.",
+    )
+    data["body"] = body
+    return ok(resolved, data, **meta)
 
 
 @register(mcp)
-def read_document(account: str | None = None, document_id: str = "") -> dict:
-    """Read a document's plain text (paragraphs and table cells)."""
+def read_document(
+    account: str | None = None,
+    document_id: str = "",
+    max_chars: int | None = None,
+    offset: int = 0,
+) -> dict:
+    """Read a document's plain text (paragraphs and table cells).
+
+    Returns up to max_chars characters (default 100000) from offset; when
+    truncated=true, call again with offset=next_offset.
+    """
     api, resolved = _api(account)
-    return ok(resolved, run_tool(lambda: api.get_document_text(document_id)))
+    data = run_tool(lambda: api.get_document_text(document_id))
+    data["text"], meta = cap_text(
+        data["text"], max_chars, offset,
+        hint="Call read_document again with offset=next_offset.",
+    )
+    return ok(resolved, data, **meta)
 
 
 @register(mcp)
-def read_document_as_markdown(account: str | None = None, document_id: str = "") -> dict:
-    """Read a document as markdown, preserving headings, lists, tables, and links (unlike read_document's plain text)."""
+def read_document_as_markdown(
+    account: str | None = None,
+    document_id: str = "",
+    max_chars: int | None = None,
+    offset: int = 0,
+) -> dict:
+    """Read a document as markdown, preserving headings, lists, tables, and links (unlike read_document's plain text).
+
+    Returns up to max_chars characters (default 100000) from offset; when
+    truncated=true, call again with offset=next_offset.
+    """
     api, resolved = _api(account)
-    return ok(resolved, run_tool(lambda: api.read_document_as_markdown(document_id)))
+    data = run_tool(lambda: api.read_document_as_markdown(document_id))
+    data["markdown"], meta = cap_text(
+        data["markdown"], max_chars, offset,
+        hint="Call read_document_as_markdown again with offset=next_offset.",
+    )
+    return ok(resolved, data, **meta)
 
 
 @register(mcp)
