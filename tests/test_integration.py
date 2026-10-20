@@ -12,6 +12,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 from types import SimpleNamespace
 
 import google_auth_core as core
@@ -67,6 +69,72 @@ async def test_parallel_accounts_do_not_interfere(store_env, write_token):
     (api_a, _), (api_b, _) = await asyncio.gather(call("a@x.com"), call("b@y.com"))
     assert api_a.token == "tok-A"
     assert api_b.token == "tok-B"  # no cross-contamination under concurrency
+
+
+
+def _blocking_tool_server(on_call):
+    """A server with one tool that resolves its account through get_api and
+    then runs ``on_call(account)`` in place of a Google request."""
+    from google_workspace_mcp.core import ok, register, run_tool
+
+    mcp = build_server("test-mcp")
+
+    @register(mcp)
+    def slow_call(account: str | None = None) -> dict:
+        """Stand-in for a blocking Google call."""
+        api, resolved = runtime.get_api("gmail", lambda a: SimpleNamespace(account=a), account)
+        return ok(resolved, run_tool(lambda: on_call(api.account)))
+
+    return mcp
+
+
+@pytest.mark.anyio
+async def test_tool_calls_for_two_accounts_overlap(store_env, write_token):
+    """Through the MCP layer, a blocking call for one account must not hold up
+    another account's call. The barrier only opens when both are in flight at
+    once; if tools ran on the event loop, the first would time out alone."""
+    write_token(store_env, "a@x.com")
+    write_token(store_env, "b@y.com")
+    barrier = threading.Barrier(2, timeout=5)
+
+    def on_call(account):
+        barrier.wait()
+        return account
+
+    mcp = _blocking_tool_server(on_call)
+    ra, rb = await asyncio.gather(
+        mcp.call_tool("slow_call", {"account": "a@x.com"}),
+        mcp.call_tool("slow_call", {"account": "b@y.com"}),
+    )
+    assert _parse_tool(ra)["data"] == "a@x.com"
+    assert _parse_tool(rb)["data"] == "b@y.com"
+
+
+@pytest.mark.anyio
+async def test_tool_calls_on_one_account_never_share_the_client(store_env, write_token):
+    """httplib2 is not thread-safe, so calls on the same cached client must run
+    one at a time even though they now leave the event loop."""
+    write_token(store_env, "a@x.com")
+    active = 0
+    peak = 0
+    guard = threading.Lock()
+
+    def on_call(account):
+        nonlocal active, peak
+        with guard:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.05)
+        with guard:
+            active -= 1
+        return account
+
+    mcp = _blocking_tool_server(on_call)
+    results = await asyncio.gather(
+        *(mcp.call_tool("slow_call", {"account": "a@x.com"}) for _ in range(4))
+    )
+    assert all(_parse_tool(r)["ok"] for r in results)
+    assert peak == 1
 
 
 # --- persistence -------------------------------------------------------------

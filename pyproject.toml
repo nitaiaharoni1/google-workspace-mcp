@@ -28,6 +28,7 @@ dependencies = [
     # mcp 2.0 removed mcp.server.fastmcp (renamed to mcp.server.mcpserver);
     # core/server.py still imports FastMCP, so stay on the 1.x line.
     "mcp>=1.26,<2",
+    "anyio>=4",
     "google-auth-core>=0.2.1",
     "gmail-cli-oauth>=1.6.0",
     "google-calendar-cli>=1.7.0",

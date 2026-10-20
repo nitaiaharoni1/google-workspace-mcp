@@ -5,11 +5,13 @@ through these helpers, which is what keeps the five servers aligned.
 
 from __future__ import annotations
 
+import functools
 import os
 import threading
 import time
 from typing import Any, Callable, Optional
 
+import anyio.to_thread
 import google_auth_core as core
 from mcp.types import ToolAnnotations
 
@@ -23,6 +25,15 @@ READONLY = _readonly()
 
 _api_cache: dict = {}
 _lock = threading.Lock()
+
+# One lock per cached client. googleapiclient services sit on httplib2, which
+# is not thread-safe, so two tool calls must never use the same client at once.
+# Locking per (service, account) keeps calls on one account serialized while
+# different accounts still run in parallel.
+_client_locks: dict = {}
+# Locks the current tool call holds, released when the call returns. Only set
+# inside a registered tool's worker thread; direct (test) calls take no locks.
+_held = threading.local()
 
 # Seconds to wait before each retry when a connection to Google could not be
 # opened at all (network blip, Wi-Fi/VPN change, wake from sleep).
@@ -55,20 +66,29 @@ def get_api(
 
     Returns ``(api_instance, resolved_account)``.
     """
-    _creds, resolved = core.get_credentials(account, service_name=service_name)
-    key = (service_name, resolved)
+    # get_credentials and client factories may refresh an expired token and
+    # rewrite its file in place; with tools on worker threads, two calls must
+    # not do that at the same time, so both run under the cache lock.
     with _lock:
+        _creds, resolved = core.get_credentials(account, service_name=service_name)
+        key = (service_name, resolved)
         inst = _api_cache.get(key)
         if inst is None:
             inst = factory(resolved)
             _api_cache[key] = inst
-        return inst, resolved
+        client_lock = _client_locks.setdefault(key, threading.Lock())
+    held = getattr(_held, "locks", None)
+    if held is not None and client_lock not in held:
+        client_lock.acquire()
+        held.append(client_lock)
+    return inst, resolved
 
 
 def reset_api_cache() -> None:
     """Drop all cached API clients (used by tests and after re-auth)."""
     with _lock:
         _api_cache.clear()
+        _client_locks.clear()
 
 
 def cached_keys() -> list:
@@ -96,6 +116,34 @@ def run_tool(fn: Callable[[], Any]) -> Any:
                 time.sleep(delay)
                 continue
             raise core.map_exception(e)
+
+
+def _run_scoped(fn: Callable, args: tuple, kwargs: dict) -> Any:
+    """Run a tool in the current (worker) thread, releasing any client locks
+    that ``get_api`` took on its behalf once it finishes."""
+    _held.locks = []
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        for lock in reversed(_held.locks):
+            lock.release()
+        _held.locks = None
+
+
+def _off_loop(fn: Callable) -> Callable:
+    """Async wrapper FastMCP awaits instead of calling ``fn`` on the event loop.
+
+    Tools are blocking (Google HTTP calls, connect-retry sleeps), so each call
+    runs in a worker thread and concurrent calls actually overlap.
+    ``functools.wraps`` keeps the name, docstring, and signature FastMCP builds
+    the schema from.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        return await anyio.to_thread.run_sync(_run_scoped, fn, args, kwargs)
+
+    return wrapper
 
 
 def register(
@@ -127,6 +175,7 @@ def register(
             destructiveHint=destructive if mutating else None,
             idempotentHint=idempotent,
         )
-        return mcp.tool(annotations=annotations)(fn)
+        mcp.tool(annotations=annotations)(_off_loop(fn))
+        return fn  # direct callers keep the plain sync function
 
     return deco
