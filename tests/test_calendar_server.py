@@ -44,6 +44,7 @@ EXPECTED_TOOLS = {
     "get_profile", "list_calendars", "get_calendar", "list_events",
     "search_events", "get_event", "get_recurring_event_instances",
     "freebusy_query", "find_available_slots", "get_colors", "list_event_changes",
+    "search_contacts",
     # write
     "create_event", "create_out_of_office", "create_focus_time",
     "update_event", "quick_add_event", "move_event",
@@ -64,8 +65,8 @@ async def test_tool_list_includes_expected_names():
 @pytest.mark.anyio
 async def test_tool_count():
     tools = await server.mcp.list_tools()
-    # 3 common + 11 read + 12 write + 3 destructive = 29
-    assert len(tools) == 29
+    # 3 common + 12 read + 12 write + 3 destructive = 30
+    assert len(tools) == 30
 
 
 # ---------------------------------------------------------------------------

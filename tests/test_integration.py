@@ -158,6 +158,36 @@ async def test_all_servers_expose_common_tools():
         assert {"list_accounts", "whoami", "auth_status"}.issubset(names)
 
 
+@pytest.mark.anyio
+async def test_contact_search_on_gmail_and_calendar_only():
+    from google_workspace_mcp.calendar import server as c
+    from google_workspace_mcp.docs import server as d
+    from google_workspace_mcp.drive import server as dr
+    from google_workspace_mcp.gmail import server as g
+    from google_workspace_mcp.sheets import server as s
+
+    for mod in (g, c):
+        tool = _tool_by_name(await mod.mcp.list_tools(), "search_contacts")
+        assert tool.annotations.readOnlyHint is True
+        assert tool.inputSchema["required"] == ["query"]
+    for mod in (s, d, dr):
+        names = {t.name for t in await mod.mcp.list_tools()}
+        assert "search_contacts" not in names
+
+
+def test_readonly_gate_keeps_contact_search():
+    code = (
+        "import asyncio\n"
+        "from google_workspace_mcp.calendar import server\n"
+        "names = [t.name for t in asyncio.run(server.mcp.list_tools())]\n"
+        "print(('search_contacts' in names, 'create_event' in names))\n"
+    )
+    env = {**os.environ, "GOOGLE_MCP_READONLY": "1"}
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "(True, False)"
+
+
 def test_google_auth_exposes_setup_and_doctor():
     """Pinned google-auth-core>=0.2.0 must ship setup and doctor subcommands."""
     from google_auth_core.cli import main

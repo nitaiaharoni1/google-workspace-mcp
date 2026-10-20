@@ -1,6 +1,7 @@
 """Google Calendar MCP server: events, calendars, availability."""
 from __future__ import annotations
 
+from ..contacts.tools import register_contacts_tools
 from ..core import build_server, get_api, ok, register, run_tool
 from .changes_api import CalendarChangesAPI
 
@@ -9,6 +10,7 @@ mcp = build_server(
     "Google Calendar: list/search events, create/update/delete events, manage calendars, and check availability for one or more accounts.",
     service_name="calendar",
 )
+register_contacts_tools(mcp, service_name="calendar")
 
 
 def _api(account=None):
