@@ -11,7 +11,9 @@ mcp = build_server(
     "Google Docs: create, read, and edit documents for one or more Google accounts. "
     "For formatted content (headings, lists, tables, bold), prefer the markdown tools "
     "(create_document_from_markdown, replace_document_with_markdown, append_markdown) "
-    "over element-by-element insert/format calls.",
+    "over element-by-element insert/format calls. To style or link text by content, use "
+    "format_matches; for other index-based writes, read revisionId from find_text or "
+    "get_content_map and pass it as required_revision_id.",
     service_name="docs",
 )
 
@@ -45,6 +47,7 @@ def get_document(
         "read_document_as_markdown / get_content_map for a compact view.",
     )
     data["body"] = body
+    data = {"documentId": data.get("documentId"), "revisionId": data.get("revisionId"), **data}
     return ok(resolved, data, **meta)
 
 
@@ -94,9 +97,34 @@ def read_document_as_markdown(
 
 @register(mcp, core=True)
 def get_content_map(account: str | None = None, *, document_id: str, include_headers_footers: bool = True) -> dict:
-    """Return a structured index map of document elements (paragraphs, tables, indices, text previews)."""
+    """Return a structured index map of document elements (paragraphs, tables, indices, text previews).
+
+    Includes revisionId: pass it as required_revision_id to index-based writes so
+    they fail rather than land at stale positions if the doc changes meanwhile.
+    """
     api, resolved = _api(account)
     data = run_tool(lambda: api.get_content_map(document_id, include_headers_footers))
+    return ok(resolved, data)
+
+
+@register(mcp, core=True)
+def find_text(
+    account: str | None = None,
+    *,
+    document_id: str,
+    pattern: str,
+    regex: bool = False,
+    match_case: bool = True,
+    max_matches: int = 200,
+) -> dict:
+    """Find text in the body (table cells included) and return each match's start/end index, a context snippet, and the doc's revisionId.
+
+    Much smaller than get_document. pattern is literal unless regex=true. Indices
+    are UTF-16 Docs indices, ready for format_text / delete_range; pass revisionId
+    as required_revision_id so a write fails if the doc changed after this read.
+    """
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.find_text(document_id, pattern, regex, match_case, max_matches))
     return ok(resolved, data)
 
 
@@ -137,10 +165,10 @@ def append_text(account: str | None = None, *, document_id: str, text: str) -> d
 
 
 @register(mcp, mutating=True, core=True)
-def insert_text(account: str | None = None, *, document_id: str, text: str, index: int = 1) -> dict:
+def insert_text(account: str | None = None, *, document_id: str, text: str, index: int = 1, required_revision_id: str | None = None) -> dict:
     """Insert text at a specific character index (1 = start of body)."""
     api, resolved = _api(account)
-    return ok(resolved, run_tool(lambda: api.insert_text(document_id, text, index)))
+    return ok(resolved, run_tool(lambda: api.insert_text(document_id, text, index, required_revision_id=required_revision_id)))
 
 
 @register(mcp, mutating=True, core=True)
@@ -152,26 +180,51 @@ def replace_all_text(account: str | None = None, *, document_id: str, find: str,
 
 # --- format / structure ---
 @register(mcp, mutating=True, core=True)
-def format_text(account: str | None = None, *, document_id: str, start_index: int, end_index: int, bold: bool | None = None, italic: bool | None = None, underline: bool | None = None, strikethrough: bool | None = None, font_size: float | None = None, font_family: str | None = None, link_url: str | None = None, foreground_color: str | None = None, background_color: str | None = None, segment_id: str | None = None) -> dict:
-    """Style a character range (bold/italic/underline/strikethrough, font size/family in PT, link URL, hex foreground/background colors). Use segment_id for header/footer text."""
+def format_text(account: str | None = None, *, document_id: str, start_index: int, end_index: int, bold: bool | None = None, italic: bool | None = None, underline: bool | None = None, strikethrough: bool | None = None, font_size: float | None = None, font_family: str | None = None, link_url: str | None = None, foreground_color: str | None = None, background_color: str | None = None, segment_id: str | None = None, required_revision_id: str | None = None, clear_link: bool = False) -> dict:
+    """Style a character range (bold/italic/underline/strikethrough, font size/family in PT, link URL, hex foreground/background colors). Use segment_id for header/footer text.
+
+    clear_link=true removes links in the range, text run by text run (a single
+    whole-range clear is ignored by Docs inside tables). To style text by
+    content instead of indices, prefer format_matches.
+    """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.format_text(document_id, start_index, end_index, bold, italic, underline, strikethrough, font_size, font_family, link_url, foreground_color, background_color, segment_id))
+    data = run_tool(lambda: api.format_text(document_id, start_index, end_index, bold, italic, underline, strikethrough, font_size, font_family, link_url, foreground_color, background_color, segment_id, required_revision_id=required_revision_id, clear_link=clear_link))
+    return ok(resolved, data)
+
+
+@register(mcp, mutating=True, core=True)
+def format_matches(account: str | None = None, *, document_id: str, pattern: str, regex: bool = False, match_case: bool = True, link_url_template: str | None = None, clear_link: bool = False, bold: bool | None = None, italic: bool | None = None, underline: bool | None = None, strikethrough: bool | None = None, font_size: float | None = None, font_family: str | None = None, foreground_color: str | None = None, background_color: str | None = None, required_revision_id: str | None = None) -> dict:
+    """Style every match of pattern in the body (table cells included) in one call, with no index math.
+
+    Positions are resolved on the server from a fresh read and written in one
+    batchUpdate guarded by that read's revision, so they cannot land on stale
+    indices. pattern is literal unless regex=true. link_url_template links each
+    match, with {match} replaced by the URL-encoded matched text (e.g. pattern
+    "LIG-\\d+", regex=true, link_url_template "https://linear.app/acme/issue/{match}").
+    clear_link removes links from the matches, run by run. Returns matchCount and
+    the new revisionId.
+    """
+    api, resolved = _api(account)
+    data = run_tool(lambda: api.format_matches(
+        document_id, pattern, regex, match_case, link_url_template, clear_link, bold, italic, underline,
+        strikethrough, font_size, font_family, foreground_color, background_color, required_revision_id,
+    ))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True)
-def set_paragraph_style(account: str | None = None, *, document_id: str, start_index: int, end_index: int, named_style: str = "NORMAL_TEXT") -> dict:
+def set_paragraph_style(account: str | None = None, *, document_id: str, start_index: int, end_index: int, named_style: str = "NORMAL_TEXT", required_revision_id: str | None = None) -> dict:
     """Apply a paragraph named style (NORMAL_TEXT, TITLE, SUBTITLE, HEADING_1..HEADING_6) to a range."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.set_paragraph_style(document_id, start_index, end_index, named_style))
+    data = run_tool(lambda: api.set_paragraph_style(document_id, start_index, end_index, named_style, required_revision_id=required_revision_id))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True)
-def update_paragraph_style(account: str | None = None, *, document_id: str, start_index: int, end_index: int, named_style_type: str | None = None, alignment: str | None = None, indent_start_pt: float | None = None, indent_end_pt: float | None = None, space_above_pt: float | None = None, space_below_pt: float | None = None, line_spacing: float | None = None, line_spacing_mode: str | None = None, segment_id: str | None = None) -> dict:
+def update_paragraph_style(account: str | None = None, *, document_id: str, start_index: int, end_index: int, named_style_type: str | None = None, alignment: str | None = None, indent_start_pt: float | None = None, indent_end_pt: float | None = None, space_above_pt: float | None = None, space_below_pt: float | None = None, line_spacing: float | None = None, line_spacing_mode: str | None = None, segment_id: str | None = None, required_revision_id: str | None = None) -> dict:
     """Apply paragraph formatting: alignment, indents/spacing in PT, line_spacing (100=normal), line_spacing_mode (AT_LEAST/EXACTLY/MULTIPLE), named style type."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.update_paragraph_style(document_id, start_index, end_index, named_style_type, alignment, indent_start_pt, indent_end_pt, space_above_pt, space_below_pt, line_spacing, line_spacing_mode, segment_id))
+    data = run_tool(lambda: api.update_paragraph_style(document_id, start_index, end_index, named_style_type, alignment, indent_start_pt, indent_end_pt, space_above_pt, space_below_pt, line_spacing, line_spacing_mode, segment_id, required_revision_id=required_revision_id))
     return ok(resolved, data)
 
 
@@ -224,74 +277,74 @@ def create_footer(account: str | None = None, *, document_id: str, footer_type: 
 
 
 @register(mcp, mutating=True)
-def insert_inline_image(account: str | None = None, *, document_id: str, uri: str, index: int = 1, width_pt: float | None = None, height_pt: float | None = None, segment_id: str | None = None) -> dict:
+def insert_inline_image(account: str | None = None, *, document_id: str, uri: str, index: int = 1, width_pt: float | None = None, height_pt: float | None = None, segment_id: str | None = None, required_revision_id: str | None = None) -> dict:
     """Insert an inline image from a public URI (PNG/JPEG/GIF, max 2KB URL). Optional width/height in PT. Use segment_id for header/footer images."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.insert_inline_image(document_id, uri, index, width_pt, height_pt, segment_id))
+    data = run_tool(lambda: api.insert_inline_image(document_id, uri, index, width_pt, height_pt, segment_id, required_revision_id=required_revision_id))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True)
-def insert_chart_image(account: str | None = None, *, document_id: str, uri: str, index: int = 1, width_pt: float = 468, height_pt: float = 280, segment_id: str | None = None) -> dict:
+def insert_chart_image(account: str | None = None, *, document_id: str, uri: str, index: int = 1, width_pt: float = 468, height_pt: float = 280, segment_id: str | None = None, required_revision_id: str | None = None) -> dict:
     """Insert a chart rendered as an image (export from Sheets or another tool, then pass a public image URL). Default size fits a letter-width page."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.insert_chart_image(document_id, uri, index, width_pt, height_pt, segment_id))
+    data = run_tool(lambda: api.insert_chart_image(document_id, uri, index, width_pt, height_pt, segment_id, required_revision_id=required_revision_id))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True, core=True)
-def insert_table(account: str | None = None, *, document_id: str, rows: int = 2, columns: int = 2, index: int = 1, segment_id: str | None = None) -> dict:
+def insert_table(account: str | None = None, *, document_id: str, rows: int = 2, columns: int = 2, index: int = 1, segment_id: str | None = None, required_revision_id: str | None = None) -> dict:
     """Insert an empty table at the given body index (or in a header/footer via segment_id)."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.insert_table(document_id, rows, columns, index, segment_id))
+    data = run_tool(lambda: api.insert_table(document_id, rows, columns, index, segment_id, required_revision_id=required_revision_id))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True)
-def insert_page_break(account: str | None = None, *, document_id: str, index: int = 1, segment_id: str | None = None) -> dict:
+def insert_page_break(account: str | None = None, *, document_id: str, index: int = 1, segment_id: str | None = None, required_revision_id: str | None = None) -> dict:
     """Insert a page break at the given index (body or header/footer via segment_id)."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.insert_page_break(document_id, index, segment_id))
+    data = run_tool(lambda: api.insert_page_break(document_id, index, segment_id, required_revision_id=required_revision_id))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True)
-def insert_bullets(account: str | None = None, *, document_id: str, start_index: int, end_index: int, bullet_preset: str = "BULLET_DISC_CIRCLE_SQUARE", segment_id: str | None = None) -> dict:
+def insert_bullets(account: str | None = None, *, document_id: str, start_index: int, end_index: int, bullet_preset: str = "BULLET_DISC_CIRCLE_SQUARE", segment_id: str | None = None, required_revision_id: str | None = None) -> dict:
     """Turn the paragraphs in a range into a bulleted/numbered list (e.g. BULLET_DISC_CIRCLE_SQUARE, NUMBERED_DECIMAL_ALPHA_ROMAN)."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.insert_bullets(document_id, start_index, end_index, bullet_preset, segment_id))
+    data = run_tool(lambda: api.insert_bullets(document_id, start_index, end_index, bullet_preset, segment_id, required_revision_id=required_revision_id))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True)
-def insert_numbered_list(account: str | None = None, *, document_id: str, start_index: int, end_index: int, preset: str = "NUMBERED_DECIMAL_ALPHA_ROMAN", segment_id: str | None = None) -> dict:
+def insert_numbered_list(account: str | None = None, *, document_id: str, start_index: int, end_index: int, preset: str = "NUMBERED_DECIMAL_ALPHA_ROMAN", segment_id: str | None = None, required_revision_id: str | None = None) -> dict:
     """Apply numbered list formatting. Presets: NUMBERED_DECIMAL_ALPHA_ROMAN, NUMBERED_DECIMAL_ALPHA_ROMAN_PARENS, NUMBERED_DECIMAL_NESTED, NUMBERED_UPPERALPHA_ALPHA_ROMAN, NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL, NUMBERED_ZERODECIMAL_ALPHA_ROMAN."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.insert_numbered_list(document_id, start_index, end_index, preset, segment_id))
+    data = run_tool(lambda: api.insert_numbered_list(document_id, start_index, end_index, preset, segment_id, required_revision_id=required_revision_id))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True)
-def populate_table(account: str | None = None, *, document_id: str, table_start_index: int, rows: list[list[str]], segment_id: str | None = None) -> dict:
+def populate_table(account: str | None = None, *, document_id: str, table_start_index: int, rows: list[list[str]], segment_id: str | None = None, required_revision_id: str | None = None) -> dict:
     """Fill table cells with text. Use get_content_map to find table_start_index and dimensions."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.populate_table(document_id, table_start_index, rows, segment_id))
+    data = run_tool(lambda: api.populate_table(document_id, table_start_index, rows, segment_id, required_revision_id=required_revision_id))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True)
-def merge_table_cells(account: str | None = None, *, document_id: str, table_start_index: int, row: int = 0, column: int = 0, row_span: int = 1, column_span: int = 1, segment_id: str | None = None) -> dict:
+def merge_table_cells(account: str | None = None, *, document_id: str, table_start_index: int, row: int = 0, column: int = 0, row_span: int = 1, column_span: int = 1, segment_id: str | None = None, required_revision_id: str | None = None) -> dict:
     """Merge a rectangular range of table cells."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.merge_table_cells(document_id, table_start_index, row, column, row_span, column_span, segment_id))
+    data = run_tool(lambda: api.merge_table_cells(document_id, table_start_index, row, column, row_span, column_span, segment_id, required_revision_id=required_revision_id))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True)
-def format_table_cells(account: str | None = None, *, document_id: str, table_start_index: int, row: int = 0, column: int = 0, row_span: int = 1, column_span: int = 1, background_color: str | None = None, border_color: str | None = None, border_width_pt: float | None = None, segment_id: str | None = None) -> dict:
+def format_table_cells(account: str | None = None, *, document_id: str, table_start_index: int, row: int = 0, column: int = 0, row_span: int = 1, column_span: int = 1, background_color: str | None = None, border_color: str | None = None, border_width_pt: float | None = None, segment_id: str | None = None, required_revision_id: str | None = None) -> dict:
     """Style table cells: hex background_color, border_color, border_width_pt."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.format_table_cells(document_id, table_start_index, row, column, row_span, column_span, background_color, border_color, border_width_pt, segment_id))
+    data = run_tool(lambda: api.format_table_cells(document_id, table_start_index, row, column, row_span, column_span, background_color, border_color, border_width_pt, segment_id, required_revision_id=required_revision_id))
     return ok(resolved, data)
 
 
@@ -307,15 +360,20 @@ def insert_page_number(account: str | None = None, *, document_id: str, footer_i
 
 
 @register(mcp, mutating=True, destructive=True)
-def batch_update(account: str | None = None, *, document_id: str, requests: list[dict] | str) -> dict:
-    """Execute raw Docs batchUpdate requests. Pass a list of request dicts or a JSON string."""
+def batch_update(account: str | None = None, *, document_id: str, requests: list[dict] | str, required_revision_id: str | None = None) -> dict:
+    """Execute raw Docs batchUpdate requests. Pass a list of request dicts or a JSON string.
+
+    Pass required_revision_id (the revisionId from the read you computed indices
+    from) so the write fails instead of landing at shifted positions if the doc
+    changed in between. To style text by content, prefer format_matches.
+    """
     api, resolved = _api(account)
 
     def _call():
         raw = requests
         if isinstance(raw, str):
             raw = json.loads(raw)
-        return api.batch_update(document_id, raw)
+        return api.batch_update(document_id, raw, required_revision_id)
 
     data = run_tool(_call)
     return ok(resolved, data)
@@ -333,18 +391,18 @@ def insert_sheets_chart(account: str | None = None, *, document_id: str, spreads
 
 
 @register(mcp, mutating=True)
-def remove_bullets(account: str | None = None, *, document_id: str, start_index: int, end_index: int, segment_id: str | None = None) -> dict:
+def remove_bullets(account: str | None = None, *, document_id: str, start_index: int, end_index: int, segment_id: str | None = None, required_revision_id: str | None = None) -> dict:
     """Remove bullets/numbering from paragraphs in a range."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.remove_bullets(document_id, start_index, end_index, segment_id))
+    data = run_tool(lambda: api.remove_bullets(document_id, start_index, end_index, segment_id, required_revision_id=required_revision_id))
     return ok(resolved, data)
 
 
 @register(mcp, mutating=True, destructive=True)
-def delete_range(account: str | None = None, *, document_id: str, start_index: int, end_index: int, segment_id: str | None = None) -> dict:
+def delete_range(account: str | None = None, *, document_id: str, start_index: int, end_index: int, segment_id: str | None = None, required_revision_id: str | None = None) -> dict:
     """Delete content in the given character index range (body or header/footer via segment_id)."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.delete_range(document_id, start_index, end_index, segment_id))
+    data = run_tool(lambda: api.delete_range(document_id, start_index, end_index, segment_id, required_revision_id=required_revision_id))
     return ok(resolved, data)
 
 
