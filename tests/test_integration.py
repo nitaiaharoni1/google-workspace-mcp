@@ -234,6 +234,7 @@ _CORE_TOOLSET = {
         "read_document", "read_document_as_markdown", "get_content_map",
         "create_document_from_markdown", "replace_document_with_markdown", "append_markdown",
         "insert_text", "replace_all_text", "format_text", "insert_table",
+        "find_text", "format_matches",
     },
     "drive": {
         "search_files", "list_files", "get_file", "read_file_text", "download_file",

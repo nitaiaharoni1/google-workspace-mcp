@@ -40,6 +40,17 @@ runs the Google call through shared error mapping, and returns
   `replace_document_with_markdown` let an agent write plain markdown while Google
   converts it to native headings, lists, links, and tables; `read_document_as_markdown`
   round-trips it back.
+- **Edits that can't land at stale positions**: `find_text` returns each match's
+  start/end index, a short context snippet, and the doc's `revisionId` without
+  dumping the whole document (table cells included, UTF-16 indices). `format_matches`
+  styles or links every match in one call, resolving positions on the server and
+  guarding the write with that read's revision, e.g. `pattern="LIG-\d+"`, `regex=true`,
+  `link_url_template="https://linear.app/acme/issue/{match}"`; `clear_link=true`
+  removes links instead. Every index-based write (`batch_update`, `format_text`,
+  `insert_text`, `delete_range`, table and paragraph tools) accepts
+  `required_revision_id`: pass the `revisionId` from `find_text`, `get_content_map`
+  or `get_document`, and if the doc changed since, the write fails with "re-read"
+  instead of hitting shifted text.
 
 ### Sheets (`gsheets-mcp`)
 

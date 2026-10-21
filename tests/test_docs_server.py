@@ -872,3 +872,213 @@ async def test_get_document_docstring_steers_to_compact_tools():
     tools = {t.name: t for t in await server.mcp.list_tools()}
     desc = tools["get_document"].description
     assert "read_document_as_markdown" in desc and "get_content_map" in desc
+
+
+# --- revision guard and find-based formatting ---
+
+def _run(start, content, **style):
+    return {"startIndex": start, "endIndex": start + len(content.encode("utf-16-le")) // 2,
+            "textRun": {"content": content, "textStyle": style}}
+
+
+def _para(*elements):
+    return {"startIndex": elements[0]["startIndex"], "endIndex": elements[-1]["endIndex"],
+            "paragraph": {"elements": list(elements)}}
+
+
+def _doc(*content, revision="rev1"):
+    return {"documentId": "D1", "title": "T", "revisionId": revision, "body": {"content": list(content)}}
+
+
+# "Intro\n" at 1-7, then a 1x2 table at 7 whose cells hold "LIG-1\n" (9-15) and "x LIG-22\n" (16-25).
+TABLE_DOC = _doc(
+    _para(_run(1, "Intro\n")),
+    {"startIndex": 7, "endIndex": 26, "table": {"rows": 1, "columns": 2, "tableRows": [{"tableCells": [
+        {"content": [_para(_run(9, "LIG-1\n"))]},
+        {"content": [_para(_run(16, "x LIG-22\n"))]},
+    ]}]}},
+)
+
+# "See " (1-5), an inline image (5-6), " LIG-7\n" (6-13).
+IMAGE_DOC = _doc(_para(
+    _run(1, "See "),
+    {"startIndex": 5, "endIndex": 6, "inlineObjectElement": {"inlineObjectId": "kix.img"}},
+    _run(6, " LIG-7\n"),
+))
+
+
+def _matches(doc, pattern, regex=False):
+    text, indexes, _runs = DocsAPI._text_index_map(DocsAPI._body_content(doc))
+    return [(m["text"], m["startIndex"], m["endIndex"])
+            for m in DocsAPI._find_matches(text, indexes, pattern, regex)]
+
+
+def test_find_matches_plain_paragraph():
+    doc = _doc(_para(_run(1, "Fix LIG-12 and LIG-3\n")))
+    assert _matches(doc, r"LIG-\d+", regex=True) == [("LIG-12", 5, 11), ("LIG-3", 16, 21)]
+
+
+def test_find_matches_inside_table_cells():
+    assert _matches(TABLE_DOC, r"LIG-\d+", regex=True) == [("LIG-1", 9, 14), ("LIG-22", 18, 24)]
+
+
+def test_find_matches_counts_inline_image_and_never_spans_it():
+    assert _matches(IMAGE_DOC, "LIG-7") == [("LIG-7", 7, 12)]
+    assert _matches(IMAGE_DOC, "See  LIG") == []
+
+
+def test_find_matches_uses_utf16_indices_for_non_ascii():
+    # The emoji takes two UTF-16 units; Hebrew letters take one each.
+    doc = _doc(_para(_run(1, "😀 שלום LIG-9\n")))
+    assert _matches(doc, "LIG-9") == [("LIG-9", 9, 14)]
+    assert _matches(doc, "שלום") == [("שלום", 4, 8)]
+
+
+def test_find_matches_literal_by_default_and_rejects_bad_regex():
+    doc = _doc(_para(_run(1, "a.b axb\n")))
+    assert _matches(doc, "a.b") == [("a.b", 1, 4)]
+    with pytest.raises(ValueError, match="invalid regex"):
+        _matches(doc, "(", regex=True)
+
+
+def test_find_text_returns_revision_and_context(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().get().execute.return_value = TABLE_DOC
+    out = api.find_text("D1", r"LIG-\d+", regex=True, max_matches=1)
+    assert out["revisionId"] == "rev1"
+    assert out["matchCount"] == 2 and out["truncated"] is True
+    assert out["matches"] == [{"text": "LIG-1", "startIndex": 9, "endIndex": 14, "context": "Intro LIG-1 x LIG-22 "}]
+
+
+def test_format_matches_links_each_match_with_one_guarded_batch(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().get().execute.return_value = TABLE_DOC
+    svc.documents().batchUpdate().execute.return_value = {"writeControl": {"requiredRevisionId": "rev2"}}
+    out = api.format_matches("D1", r"LIG-\d+", regex=True,
+                             link_url_template="https://linear.app/acme/issue/{match}")
+    _, kwargs = svc.documents().batchUpdate.call_args
+    body = kwargs["body"]
+    assert body["writeControl"] == {"requiredRevisionId": "rev1"}
+    assert [r["updateTextStyle"]["range"] for r in body["requests"]] == [
+        {"startIndex": 9, "endIndex": 14}, {"startIndex": 18, "endIndex": 24},
+    ]
+    assert body["requests"][1]["updateTextStyle"]["textStyle"] == {
+        "link": {"url": "https://linear.app/acme/issue/LIG-22"},
+    }
+    assert body["requests"][1]["updateTextStyle"]["fields"] == "link"
+    assert out["matchCount"] == 2 and out["revisionId"] == "rev2"
+
+
+def test_format_matches_clear_link_goes_run_by_run(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    # "LIG-" and "12" are separate runs, so the clear must be split in two.
+    svc.documents().get().execute.return_value = _doc(_para(
+        _run(1, "LIG-", bold=True), _run(5, "12"), _run(7, " ok\n"),
+    ))
+    svc.documents().batchUpdate().execute.return_value = {}
+    api.format_matches("D1", r"LIG-\d+", regex=True, clear_link=True)
+    _, kwargs = svc.documents().batchUpdate.call_args
+    reqs = [r["updateTextStyle"] for r in kwargs["body"]["requests"]]
+    assert [r["range"] for r in reqs] == [{"startIndex": 1, "endIndex": 5}, {"startIndex": 5, "endIndex": 7}]
+    assert all(r["textStyle"] == {} and r["fields"] == "link" for r in reqs)
+
+
+def test_format_matches_refuses_stale_revision_before_writing(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().get().execute.return_value = TABLE_DOC
+    svc.documents().batchUpdate.reset_mock()
+    with pytest.raises(Exception, match="changed after revision old"):
+        api.format_matches("D1", "LIG-1", bold=True, required_revision_id="old")
+    svc.documents().batchUpdate.assert_not_called()
+
+
+def test_format_matches_no_match_skips_write(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().get().execute.return_value = TABLE_DOC
+    svc.documents().batchUpdate.reset_mock()
+    out = api.format_matches("D1", "nope", bold=True)
+    assert out["matchCount"] == 0 and out["requestCount"] == 0
+    svc.documents().batchUpdate.assert_not_called()
+
+
+def test_format_matches_requires_a_style(monkeypatch):
+    api, _svc = _api_with_mock(monkeypatch)
+    with pytest.raises(ValueError, match="requires"):
+        api.format_matches("D1", "x")
+
+
+def test_format_text_clear_link_splits_range_by_run_across_table(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().get().execute.return_value = TABLE_DOC
+    svc.documents().batchUpdate().execute.return_value = {}
+    api.format_text("D1", 1, 26, clear_link=True)
+    _, kwargs = svc.documents().batchUpdate.call_args
+    assert [r["updateTextStyle"]["range"] for r in kwargs["body"]["requests"]] == [
+        {"startIndex": 1, "endIndex": 7}, {"startIndex": 9, "endIndex": 15}, {"startIndex": 16, "endIndex": 25},
+    ]
+    assert kwargs["body"]["writeControl"] == {"requiredRevisionId": "rev1"}
+
+
+def test_write_sends_required_revision_id_only_when_given(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().batchUpdate().execute.return_value = {}
+    api.insert_text("D1", "x", 1, required_revision_id="rev9")
+    assert svc.documents().batchUpdate.call_args.kwargs["body"]["writeControl"] == {"requiredRevisionId": "rev9"}
+    api.delete_range("D1", 1, 2)
+    assert "writeControl" not in svc.documents().batchUpdate.call_args.kwargs["body"]
+
+
+def test_populate_table_guards_with_its_own_read(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().get().execute.return_value = TABLE_DOC
+    svc.documents().batchUpdate().execute.return_value = {}
+    api.populate_table("D1", 7, [["a", "b"]])
+    assert svc.documents().batchUpdate.call_args.kwargs["body"]["writeControl"] == {"requiredRevisionId": "rev1"}
+
+
+def test_revision_mismatch_becomes_actionable_error(monkeypatch):
+    import google_auth_core as core
+    import httplib2
+    from googleapiclient.errors import HttpError
+
+    api, svc = _api_with_mock(monkeypatch)
+    content = b'{"error": {"code": 400, "message": "The required revision ID rev1 does not match the latest revision."}}'
+    svc.documents().batchUpdate().execute.side_effect = HttpError(httplib2.Response({"status": 400}), content)
+    with pytest.raises(core.InvalidArgumentError, match="Re-read it with find_text"):
+        api.batch_update("D1", [{"insertText": {"location": {"index": 1}, "text": "x"}}], "rev1")
+
+
+def test_get_content_map_includes_revision(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().get().execute.return_value = TABLE_DOC
+    assert api.get_content_map("D1")["revisionId"] == "rev1"
+
+
+@pytest.mark.anyio
+async def test_get_document_puts_revision_first(patched_docs_server):
+    patched_docs_server.get_document.return_value = {"title": "T", "body": {"content": []}, "revisionId": "rev1"}
+    env = envelope(await server.mcp.call_tool("get_document", {"document_id": "D1"}))
+    assert list(env["data"])[:2] == ["documentId", "revisionId"] and env["data"]["revisionId"] == "rev1"
+
+
+@pytest.mark.anyio
+async def test_find_and_format_matches_tools(patched_docs_server):
+    patched_docs_server.find_text.return_value = {"matchCount": 0}
+    patched_docs_server.format_matches.return_value = {"matchCount": 0}
+    await server.mcp.call_tool("find_text", {"document_id": "D1", "pattern": "LIG-1"})
+    patched_docs_server.find_text.assert_called_once_with("D1", "LIG-1", False, True, 200)
+    await server.mcp.call_tool("format_matches", {
+        "document_id": "D1", "pattern": r"LIG-\d+", "regex": True, "link_url_template": "u/{match}",
+    })
+    args = patched_docs_server.format_matches.call_args.args
+    assert args[:6] == ("D1", r"LIG-\d+", True, True, "u/{match}", False)
+
+
+@pytest.mark.anyio
+async def test_index_writes_accept_required_revision_id():
+    tools = {t.name: t for t in await server.mcp.list_tools()}
+    for name in ("batch_update", "format_text", "insert_text", "delete_range", "populate_table",
+                 "merge_table_cells", "format_table_cells", "update_paragraph_style", "format_matches"):
+        assert "required_revision_id" in tools[name].input_schema["properties"], name
+    for name in ("find_text", "format_matches"):
+        assert "pattern" in tools[name].input_schema["required"], name

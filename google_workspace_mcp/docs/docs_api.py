@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import io
+import re
+from urllib.parse import quote as url_quote
 
 import google_auth_core as core
 from googleapiclient.http import MediaIoBaseUpload
@@ -26,22 +28,54 @@ NUMBERED_BULLET_PRESETS = {
 
 DOCUMENT_MIME = "application/vnd.google-apps.document"
 
+# Stands in for each index an inline image, footnote reference, or other
+# non-text element occupies, so a match can never straddle one.
+OBJECT_PLACEHOLDER = "\ufffc"
+
+DEFAULT_MAX_MATCHES = 200
+
+
+def _is_revision_mismatch(exc):
+    """True when Docs rejected a write because writeControl.requiredRevisionId is stale."""
+    status = getattr(getattr(exc, "resp", None), "status", None)
+    try:
+        status = int(status)
+    except (TypeError, ValueError):
+        return False
+    return status == 400 and "revision" in core.map_exception(exc).args[0].lower()
+
+
+def _stale_revision_error(document_id, revision_id):
+    return core.InvalidArgumentError(
+        f"Document {document_id} changed after revision {revision_id} was read, so "
+        "nothing was written (indices from that read may now point at the wrong text). "
+        "Re-read it with find_text or get_content_map and retry with the new revisionId."
+    )
+
 
 class DocsAPI:
     def __init__(self, account=None):
         self.account = account
         self.service = core.get_service("docs", "v1", account=account)
 
-    def _batch(self, document_id, requests):
-        return self.service.documents().batchUpdate(
-            documentId=document_id, body={"requests": requests}
-        ).execute()
+    def _batch(self, document_id, requests, required_revision_id=None):
+        body = {"requests": requests}
+        if required_revision_id:
+            body["writeControl"] = {"requiredRevisionId": required_revision_id}
+        try:
+            return self.service.documents().batchUpdate(
+                documentId=document_id, body=body
+            ).execute()
+        except Exception as e:  # noqa: BLE001 - only the revision mismatch is rewritten
+            if required_revision_id and _is_revision_mismatch(e):
+                raise _stale_revision_error(document_id, required_revision_id) from e
+            raise
 
-    def batch_update(self, document_id, requests):
+    def batch_update(self, document_id, requests, required_revision_id=None):
         """Pass raw batchUpdate request dicts through to the Docs API."""
         if not isinstance(requests, list) or not requests:
             raise ValueError("requests must be a non-empty list")
-        return self._batch(document_id, requests)
+        return self._batch(document_id, requests, required_revision_id)
 
     @staticmethod
     def _pt(points):
@@ -55,6 +89,19 @@ class DocsAPI:
 
     def get_document(self, document_id):
         return self.service.documents().get(documentId=document_id).execute()
+
+    @staticmethod
+    def _guard_revision(document_id, doc, required_revision_id):
+        """Return the revision to write against, failing early if the caller's read is already stale.
+
+        Tools that compute indices from their own read guard the write with that
+        read's revision, so an edit landing in between makes the write fail instead
+        of hitting shifted positions.
+        """
+        current = doc.get("revisionId")
+        if required_revision_id and current and required_revision_id != current:
+            raise _stale_revision_error(document_id, required_revision_id)
+        return required_revision_id or current
 
     def get_document_text(self, document_id):
         """Extract the plain text of a document (paragraphs + table cells)."""
@@ -79,11 +126,11 @@ class DocsAPI:
         text = walk(doc.get("body", {}).get("content", []))
         return {"documentId": document_id, "title": doc.get("title"), "text": text}
 
-    def insert_text(self, document_id, text, index=1, segment_id=None):
+    def insert_text(self, document_id, text, index=1, segment_id=None, required_revision_id=None):
         location = {"index": index}
         if segment_id:
             location["segmentId"] = segment_id
-        return self._batch(document_id, [{"insertText": {"location": location, "text": text}}])
+        return self._batch(document_id, [{"insertText": {"location": location, "text": text}}], required_revision_id)
 
     def append_text(self, document_id, text):
         doc = self.get_document(document_id)
@@ -110,7 +157,38 @@ class DocsAPI:
 
     def format_text(self, document_id, start_index, end_index, bold=None, italic=None, underline=None,
                     strikethrough=None, font_size=None, font_family=None, link_url=None,
-                    foreground_color=None, background_color=None, segment_id=None):
+                    foreground_color=None, background_color=None, segment_id=None,
+                    required_revision_id=None, clear_link=False):
+        if clear_link and link_url is not None:
+            raise ValueError("pass link_url or clear_link, not both")
+        text_style, fields = self._text_style(
+            bold, italic, underline, strikethrough, font_size, font_family, link_url,
+            foreground_color, background_color,
+        )
+        if not fields and not clear_link:
+            raise ValueError("format_text requires at least one style attribute")
+        text_range = {"startIndex": start_index, "endIndex": end_index}
+        if segment_id:
+            text_range["segmentId"] = segment_id
+        requests = []
+        if fields:
+            requests.append({"updateTextStyle": {
+                "range": text_range,
+                "textStyle": text_style,
+                "fields": ",".join(fields),
+            }})
+        if clear_link:
+            doc = self.get_document(document_id)
+            required_revision_id = self._guard_revision(document_id, doc, required_revision_id)
+            text, indexes, runs = self._text_index_map(self._segment_content(doc, segment_id))
+            segments = self._run_segments(text, indexes, runs, start_index, end_index)
+            if not segments:
+                raise ValueError(f"no text between indices {start_index} and {end_index}")
+            requests.extend(self._clear_link_requests(segments, segment_id))
+        return self._batch(document_id, requests, required_revision_id)
+
+    def _text_style(self, bold=None, italic=None, underline=None, strikethrough=None, font_size=None,
+                    font_family=None, link_url=None, foreground_color=None, background_color=None):
         text_style = {}
         fields = []
         if bold is not None:
@@ -140,27 +218,19 @@ class DocsAPI:
         if background_color is not None:
             text_style["backgroundColor"] = {"color": {"rgbColor": self._hex_to_rgb_color(background_color)}}
             fields.append("backgroundColor")
-        if not fields:
-            raise ValueError("format_text requires at least one style attribute")
-        text_range = {"startIndex": start_index, "endIndex": end_index}
-        if segment_id:
-            text_range["segmentId"] = segment_id
-        return self._batch(document_id, [{"updateTextStyle": {
-            "range": text_range,
-            "textStyle": text_style,
-            "fields": ",".join(fields),
-        }}])
+        return text_style, fields
 
-    def set_paragraph_style(self, document_id, start_index, end_index, named_style):
+    def set_paragraph_style(self, document_id, start_index, end_index, named_style, required_revision_id=None):
         valid = {"NORMAL_TEXT", "TITLE", "SUBTITLE", "HEADING_1", "HEADING_2", "HEADING_3", "HEADING_4", "HEADING_5", "HEADING_6"}
         if named_style not in valid:
             raise ValueError(f"named_style must be one of {sorted(valid)}")
-        return self.update_paragraph_style(document_id, start_index, end_index, named_style_type=named_style)
+        return self.update_paragraph_style(document_id, start_index, end_index, named_style_type=named_style,
+                                           required_revision_id=required_revision_id)
 
     def update_paragraph_style(self, document_id, start_index, end_index, named_style_type=None,
                                alignment=None, indent_start_pt=None, indent_end_pt=None,
                                space_above_pt=None, space_below_pt=None, line_spacing=None,
-                               line_spacing_mode=None, segment_id=None):
+                               line_spacing_mode=None, segment_id=None, required_revision_id=None):
         paragraph_style = {}
         fields = []
         if named_style_type is not None:
@@ -202,7 +272,7 @@ class DocsAPI:
             "range": text_range,
             "paragraphStyle": paragraph_style,
             "fields": ",".join(fields),
-        }}])
+        }}], required_revision_id)
 
     def set_page_layout(self, document_id, page_preset=None, width_pt=None, height_pt=None,
                         margin_top_pt=None, margin_bottom_pt=None, margin_left_pt=None, margin_right_pt=None,
@@ -271,7 +341,7 @@ class DocsAPI:
         insert_resp = self.insert_text(document_id, text, index=index, segment_id=footer_id)
         return {"footerId": footer_id, "createFooter": resp, "insertText": insert_resp}
 
-    def insert_inline_image(self, document_id, uri, index=1, width_pt=None, height_pt=None, segment_id=None):
+    def insert_inline_image(self, document_id, uri, index=1, width_pt=None, height_pt=None, segment_id=None, required_revision_id=None):
         location = {"index": index}
         if segment_id:
             location["segmentId"] = segment_id
@@ -283,18 +353,19 @@ class DocsAPI:
             if height_pt is not None:
                 size["height"] = self._pt(height_pt)
             req["insertInlineImage"]["objectSize"] = size
-        return self._batch(document_id, [req])
+        return self._batch(document_id, [req], required_revision_id)
 
-    def insert_chart_image(self, document_id, uri, index=1, width_pt=468, height_pt=280, segment_id=None):
+    def insert_chart_image(self, document_id, uri, index=1, width_pt=468, height_pt=280, segment_id=None, required_revision_id=None):
         """Insert a chart as an inline image (Google Docs has no native chart API).
 
         Render the chart elsewhere (Sheets export, matplotlib, etc.) and pass a public image URL.
         """
         return self.insert_inline_image(
-            document_id, uri, index=index, width_pt=width_pt, height_pt=height_pt, segment_id=segment_id
+            document_id, uri, index=index, width_pt=width_pt, height_pt=height_pt, segment_id=segment_id,
+            required_revision_id=required_revision_id,
         )
 
-    def insert_table(self, document_id, rows, columns, index=1, segment_id=None):
+    def insert_table(self, document_id, rows, columns, index=1, segment_id=None, required_revision_id=None):
         location = {"index": index}
         if segment_id:
             location["segmentId"] = segment_id
@@ -302,25 +373,25 @@ class DocsAPI:
             "rows": rows,
             "columns": columns,
             "location": location,
-        }}])
+        }}], required_revision_id)
 
-    def insert_page_break(self, document_id, index=1, segment_id=None):
+    def insert_page_break(self, document_id, index=1, segment_id=None, required_revision_id=None):
         location = {"index": index}
         if segment_id:
             location["segmentId"] = segment_id
-        return self._batch(document_id, [{"insertPageBreak": {"location": location}}])
+        return self._batch(document_id, [{"insertPageBreak": {"location": location}}], required_revision_id)
 
-    def insert_bullets(self, document_id, start_index, end_index, bullet_preset="BULLET_DISC_CIRCLE_SQUARE", segment_id=None):
+    def insert_bullets(self, document_id, start_index, end_index, bullet_preset="BULLET_DISC_CIRCLE_SQUARE", segment_id=None, required_revision_id=None):
         text_range = {"startIndex": start_index, "endIndex": end_index}
         if segment_id:
             text_range["segmentId"] = segment_id
         return self._batch(document_id, [{"createParagraphBullets": {
             "range": text_range,
             "bulletPreset": bullet_preset,
-        }}])
+        }}], required_revision_id)
 
     def insert_numbered_list(self, document_id, start_index, end_index,
-                             preset="NUMBERED_DECIMAL_ALPHA_ROMAN", segment_id=None):
+                             preset="NUMBERED_DECIMAL_ALPHA_ROMAN", segment_id=None, required_revision_id=None):
         """Apply numbered list formatting to paragraphs in a range.
 
         Valid presets: NUMBERED_DECIMAL_ALPHA_ROMAN, NUMBERED_DECIMAL_ALPHA_ROMAN_PARENS,
@@ -329,19 +400,19 @@ class DocsAPI:
         """
         if preset not in NUMBERED_BULLET_PRESETS:
             raise ValueError(f"preset must be one of {sorted(NUMBERED_BULLET_PRESETS)}")
-        return self.insert_bullets(document_id, start_index, end_index, preset, segment_id)
+        return self.insert_bullets(document_id, start_index, end_index, preset, segment_id, required_revision_id)
 
-    def remove_bullets(self, document_id, start_index, end_index, segment_id=None):
+    def remove_bullets(self, document_id, start_index, end_index, segment_id=None, required_revision_id=None):
         text_range = {"startIndex": start_index, "endIndex": end_index}
         if segment_id:
             text_range["segmentId"] = segment_id
-        return self._batch(document_id, [{"deleteParagraphBullets": {"range": text_range}}])
+        return self._batch(document_id, [{"deleteParagraphBullets": {"range": text_range}}], required_revision_id)
 
-    def delete_range(self, document_id, start_index, end_index, segment_id=None):
+    def delete_range(self, document_id, start_index, end_index, segment_id=None, required_revision_id=None):
         text_range = {"startIndex": start_index, "endIndex": end_index}
         if segment_id:
             text_range["segmentId"] = segment_id
-        return self._batch(document_id, [{"deleteContentRange": {"range": text_range}}])
+        return self._batch(document_id, [{"deleteContentRange": {"range": text_range}}], required_revision_id)
 
     # --- content map / table helpers ---
 
@@ -442,6 +513,7 @@ class DocsAPI:
                 )
         return {
             "documentId": document_id,
+            "revisionId": doc.get("revisionId"),
             "title": doc.get("title"),
             "elements": elements,
         }
@@ -469,17 +541,13 @@ class DocsAPI:
                 return el["table"]
         return None
 
-    def populate_table(self, document_id, table_start_index, rows, segment_id=None):
+    def populate_table(self, document_id, table_start_index, rows, segment_id=None, required_revision_id=None):
         """Fill table cells with text. Rows is a list of row lists of strings."""
         if not rows or not isinstance(rows, list):
             raise ValueError("rows must be a non-empty list of row lists")
         doc = self.get_document(document_id)
-        content = doc.get("body", {}).get("content", [])
-        if segment_id:
-            segment = (doc.get("headers") or {}).get(segment_id) or (doc.get("footers") or {}).get(segment_id)
-            if not segment:
-                raise ValueError(f"segment_id {segment_id!r} not found in document headers/footers")
-            content = segment.get("content", [])
+        revision_id = self._guard_revision(document_id, doc, required_revision_id)
+        content = self._segment_content(doc, segment_id)
         table = self._find_table(content, table_start_index)
         if table is None:
             raise ValueError(f"no table found at startIndex {table_start_index}")
@@ -510,20 +578,20 @@ class DocsAPI:
             {"insertText": {"location": {"index": idx, **({"segmentId": segment_id} if segment_id else {})}, "text": text}}
             for idx, text in sorted(inserts, key=lambda item: item[0], reverse=True)
         ]
-        return self._batch(document_id, requests)
+        return self._batch(document_id, requests, revision_id)
 
     def merge_table_cells(self, document_id, table_start_index, row, column, row_span, column_span,
-                          segment_id=None):
+                          segment_id=None, required_revision_id=None):
         return self._batch(document_id, [{
             "mergeTableCells": {
                 "tableRange": self._table_range(
                     table_start_index, row, column, row_span, column_span, segment_id,
                 ),
             },
-        }])
+        }], required_revision_id)
 
     def format_table_cells(self, document_id, table_start_index, row, column, row_span=1, column_span=1,
-                           background_color=None, border_color=None, border_width_pt=None, segment_id=None):
+                           background_color=None, border_color=None, border_width_pt=None, segment_id=None, required_revision_id=None):
         table_cell_style = {}
         fields = []
         if background_color is not None:
@@ -550,7 +618,7 @@ class DocsAPI:
                 "tableCellStyle": table_cell_style,
                 "fields": ",".join(fields),
             },
-        }])
+        }], required_revision_id)
 
     def insert_page_number(self, document_id, footer_id, index=0):
         """Insert a dynamic page number field into a footer segment.
@@ -579,26 +647,41 @@ class DocsAPI:
         return 2 if ord(ch) > 0xFFFF else 1
 
     @staticmethod
-    def _body_text_index_map(doc):
+    def _text_index_map(content):
+        """Flatten paragraphs (including table cells) into text plus a Docs index per character.
+
+        Returns ``(text, indexes, runs)``: ``indexes[i]`` is the UTF-16 document
+        index of ``text[i]`` and ``runs[i]`` numbers the text run it came from.
+        Non-text paragraph elements (inline images, footnote references, rules)
+        become OBJECT_PLACEHOLDER characters with run ``None``, one per index
+        they occupy, so later indices stay right and no match spans them.
+        """
         chars = []
         indexes = []
+        runs = []
 
         def walk(elements):
             for el in elements:
                 para = el.get("paragraph")
                 if para:
                     for e in para.get("elements", []):
-                        tr = e.get("textRun")
-                        if not (tr and tr.get("content")):
-                            continue
                         start = e.get("startIndex")
                         if start is None:
                             continue
-                        content = tr["content"]
+                        tr = e.get("textRun")
+                        if tr is None:
+                            width = (e.get("endIndex") or start) - start
+                            chars.append(OBJECT_PLACEHOLDER * width)
+                            indexes.extend(range(start, start + width))
+                            runs.extend([None] * width)
+                            continue
+                        content = tr.get("content") or ""
+                        run = len(chars)
                         chars.append(content)
                         idx = start
                         for ch in content:
                             indexes.append(idx)
+                            runs.append(run)
                             idx += DocsAPI._utf16_width(ch)
                 table = el.get("table")
                 if table:
@@ -606,9 +689,26 @@ class DocsAPI:
                         for cell in row.get("tableCells", []):
                             walk(cell.get("content", []))
 
-        body = (doc or {}).get("body") or {}
-        walk(body.get("content") or [])
-        return "".join(chars), indexes
+        walk(content or [])
+        return "".join(chars), indexes, runs
+
+    @staticmethod
+    def _body_content(doc):
+        return ((doc or {}).get("body") or {}).get("content") or []
+
+    @staticmethod
+    def _segment_content(doc, segment_id=None):
+        if not segment_id:
+            return DocsAPI._body_content(doc)
+        segment = (doc.get("headers") or {}).get(segment_id) or (doc.get("footers") or {}).get(segment_id)
+        if not segment:
+            raise ValueError(f"segment_id {segment_id!r} not found in document headers/footers")
+        return segment.get("content", [])
+
+    @staticmethod
+    def _span_range(text, indexes, pos, end):
+        """Docs [startIndex, endIndex) for the characters text[pos:end]."""
+        return indexes[pos], indexes[end - 1] + DocsAPI._utf16_width(text[end - 1])
 
     @staticmethod
     def _find_quote(text, indexes, quote, occurrence):
@@ -622,9 +722,7 @@ class DocsAPI:
                 break
             found += 1
             if found == occurrence:
-                start_index = indexes[pos]
-                end_index = indexes[pos + len(quote) - 1] + DocsAPI._utf16_width(quote[-1])
-                return start_index, end_index
+                return DocsAPI._span_range(text, indexes, pos, pos + len(quote))
             start = pos + 1
         if found == 0:
             raise ValueError(f"quote {quote!r} not found in document")
@@ -633,9 +731,135 @@ class DocsAPI:
         )
 
     @staticmethod
+    def _find_matches(text, indexes, pattern, regex=False, match_case=True):
+        """Every non-empty, non-overlapping match as {text, startIndex, endIndex, pos, end}.
+
+        pos/end are offsets into ``text`` (code points); startIndex/endIndex are
+        the Docs UTF-16 indices to send back in requests.
+        """
+        if not pattern:
+            raise ValueError("pattern must be a non-empty string")
+        flags = 0 if match_case else re.IGNORECASE
+        try:
+            rx = re.compile(pattern if regex else re.escape(pattern), flags)
+        except re.error as e:
+            raise ValueError(f"invalid regex {pattern!r}: {e}") from e
+        matches = []
+        for m in rx.finditer(text):
+            if m.end() == m.start():
+                continue
+            start_index, end_index = DocsAPI._span_range(text, indexes, m.start(), m.end())
+            matches.append({
+                "text": m.group(0), "startIndex": start_index, "endIndex": end_index,
+                "pos": m.start(), "end": m.end(),
+            })
+        return matches
+
+    @staticmethod
+    def _run_segments(text, indexes, runs, start_index, end_index):
+        """Split [start_index, end_index) into one (start, end) range per text run it touches.
+
+        Clearing a link with an empty textStyle over a range that crosses table
+        structure is silently ignored by Docs, so link clears go run by run.
+        """
+        segments = []
+        for ch, idx, run in zip(text, indexes, runs):
+            if run is None or not start_index <= idx < end_index:
+                continue
+            width = DocsAPI._utf16_width(ch)
+            if segments and segments[-1][0] == run and segments[-1][2] == idx:
+                segments[-1][2] = idx + width
+            else:
+                segments.append([run, idx, idx + width])
+        return [(seg_start, seg_end) for _, seg_start, seg_end in segments]
+
+    @staticmethod
+    def _clear_link_requests(segments, segment_id=None):
+        requests = []
+        for seg_start, seg_end in segments:
+            text_range = {"startIndex": seg_start, "endIndex": seg_end}
+            if segment_id:
+                text_range["segmentId"] = segment_id
+            requests.append({"updateTextStyle": {"range": text_range, "textStyle": {}, "fields": "link"}})
+        return requests
+
+    def find_text(self, document_id, pattern, regex=False, match_case=True,
+                  max_matches=DEFAULT_MAX_MATCHES, context_chars=40):
+        """Find matches in the body (table cells included) with their indices and the doc revision."""
+        doc = self.get_document(document_id)
+        text, indexes, _runs = self._text_index_map(self._body_content(doc))
+        matches = self._find_matches(text, indexes, pattern, regex, match_case)
+        shown = []
+        for m in matches[:max_matches]:
+            context = text[max(0, m["pos"] - context_chars):m["end"] + context_chars]
+            shown.append({
+                "text": m["text"], "startIndex": m["startIndex"], "endIndex": m["endIndex"],
+                "context": context.replace("\n", " "),
+            })
+        return {
+            "documentId": document_id,
+            "revisionId": doc.get("revisionId"),
+            "title": doc.get("title"),
+            "matchCount": len(matches),
+            "matches": shown,
+            "truncated": len(matches) > len(shown),
+        }
+
+    def format_matches(self, document_id, pattern, regex=False, match_case=True, link_url_template=None,
+                       clear_link=False, bold=None, italic=None, underline=None, strikethrough=None,
+                       font_size=None, font_family=None, foreground_color=None, background_color=None,
+                       required_revision_id=None, max_listed=50):
+        """Style every match, resolving positions from a fresh read and guarding the write with its revision."""
+        if link_url_template is not None and clear_link:
+            raise ValueError("pass link_url_template or clear_link, not both")
+        text_style, fields = self._text_style(
+            bold, italic, underline, strikethrough, font_size, font_family, None,
+            foreground_color, background_color,
+        )
+        if link_url_template is not None:
+            fields.append("link")
+        if not fields and not clear_link:
+            raise ValueError("format_matches requires a style attribute, link_url_template, or clear_link")
+        doc = self.get_document(document_id)
+        revision_id = self._guard_revision(document_id, doc, required_revision_id)
+        text, indexes, runs = self._text_index_map(self._body_content(doc))
+        matches = self._find_matches(text, indexes, pattern, regex, match_case)
+        requests = []
+        for m in matches:
+            match_range = {"startIndex": m["startIndex"], "endIndex": m["endIndex"]}
+            if fields:
+                style = dict(text_style)
+                if link_url_template is not None:
+                    style["link"] = {"url": link_url_template.replace("{match}", url_quote(m["text"], safe=""))}
+                requests.append({"updateTextStyle": {
+                    "range": match_range, "textStyle": style, "fields": ",".join(fields),
+                }})
+            if clear_link:
+                requests.extend(self._clear_link_requests(
+                    self._run_segments(text, indexes, runs, m["startIndex"], m["endIndex"])
+                ))
+        new_revision = revision_id
+        if requests:
+            resp = self._batch(document_id, requests, revision_id)
+            new_revision = ((resp or {}).get("writeControl") or {}).get("requiredRevisionId") or revision_id
+        listed = [
+            {"text": m["text"], "startIndex": m["startIndex"], "endIndex": m["endIndex"]}
+            for m in matches[:max_listed]
+        ]
+        return {
+            "documentId": document_id,
+            "revisionId": new_revision,
+            "matchCount": len(matches),
+            "requestCount": len(requests),
+            "matches": listed,
+            "truncated": len(matches) > len(listed),
+        }
+
+    @staticmethod
     def _text_for_range(text, indexes, start_index, end_index):
         return "".join(
-            ch for ch, idx in zip(text, indexes) if start_index <= idx < end_index
+            ch for ch, idx in zip(text, indexes)
+            if start_index <= idx < end_index and ch != OBJECT_PLACEHOLDER
         )
 
     def add_comment(
@@ -647,7 +871,7 @@ class DocsAPI:
             if occurrence < 1:
                 raise ValueError("occurrence must be at least 1")
             doc = self.get_document(document_id)
-            text, indexes = self._body_text_index_map(doc)
+            text, indexes, _runs = self._text_index_map(self._body_content(doc))
             start_index, end_index = self._find_quote(text, indexes, quote, occurrence)
             anchor = {"docsRange": {"startIndex": start_index, "endIndex": end_index}}
             quoted_text = quote
@@ -659,7 +883,7 @@ class DocsAPI:
                     raise ValueError("start_index must be less than end_index")
                 anchor = {"docsRange": {"startIndex": start_index, "endIndex": end_index}}
                 doc = self.get_document(document_id)
-                text, indexes = self._body_text_index_map(doc)
+                text, indexes, _runs = self._text_index_map(self._body_content(doc))
                 extracted = self._text_for_range(text, indexes, start_index, end_index)
                 if extracted:
                     quoted_text = extracted
