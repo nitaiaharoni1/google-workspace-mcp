@@ -193,7 +193,7 @@ def format_text(account: str | None = None, *, document_id: str, start_index: in
 
 
 @register(mcp, mutating=True, core=True)
-def format_matches(account: str | None = None, *, document_id: str, pattern: str, regex: bool = False, match_case: bool = True, link_url_template: str | None = None, clear_link: bool = False, bold: bool | None = None, italic: bool | None = None, underline: bool | None = None, strikethrough: bool | None = None, font_size: float | None = None, font_family: str | None = None, foreground_color: str | None = None, background_color: str | None = None, required_revision_id: str | None = None) -> dict:
+def format_matches(account: str | None = None, *, document_id: str, pattern: str, regex: bool = False, match_case: bool = True, link_url_template: str | None = None, clear_link: bool = False, bold: bool | None = None, italic: bool | None = None, underline: bool | None = None, strikethrough: bool | None = None, font_size: float | None = None, font_family: str | None = None, foreground_color: str | None = None, background_color: str | None = None, required_revision_id: str | None = None, max_matches: int = 500) -> dict:
     """Style every match of pattern in the body (table cells included) in one call, with no index math.
 
     Positions are resolved on the server from a fresh read and written in one
@@ -202,12 +202,14 @@ def format_matches(account: str | None = None, *, document_id: str, pattern: str
     match, with {match} replaced by the URL-encoded matched text (e.g. pattern
     "LIG-\\d+", regex=true, link_url_template "https://linear.app/acme/issue/{match}").
     clear_link removes links from the matches, run by run. Returns matchCount and
-    the new revisionId.
+    the new revisionId. Matches never cross a paragraph, table cell, or inline
+    image. Fails without writing if there are more than max_matches matches.
     """
     api, resolved = _api(account)
     data = run_tool(lambda: api.format_matches(
         document_id, pattern, regex, match_case, link_url_template, clear_link, bold, italic, underline,
         strikethrough, font_size, font_family, foreground_color, background_color, required_revision_id,
+        max_matches,
     ))
     return ok(resolved, data)
 

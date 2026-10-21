@@ -277,6 +277,7 @@ def test_get_content_map_body_and_table(monkeypatch):
 def test_populate_table_inserts_reverse_order(monkeypatch):
     api, svc = _api_with_mock(monkeypatch)
     svc.documents().get().execute.return_value = {
+        "revisionId": "rev1",
         "body": {"content": [{
             "startIndex": 2,
             "table": {
@@ -1042,7 +1043,9 @@ def test_revision_mismatch_becomes_actionable_error(monkeypatch):
     from googleapiclient.errors import HttpError
 
     api, svc = _api_with_mock(monkeypatch)
-    content = b'{"error": {"code": 400, "message": "The required revision ID rev1 does not match the latest revision."}}'
+    # Wording and status as returned by the live API.
+    content = (b'{"error": {"code": 400, "message": "The required revision ID \'rev1\' does not match '
+               b'the latest revision.", "status": "INVALID_ARGUMENT"}}')
     svc.documents().batchUpdate().execute.side_effect = HttpError(httplib2.Response({"status": 400}), content)
     with pytest.raises(core.InvalidArgumentError, match="Re-read it with find_text"):
         api.batch_update("D1", [{"insertText": {"location": {"index": 1}, "text": "x"}}], "rev1")
@@ -1082,3 +1085,46 @@ async def test_index_writes_accept_required_revision_id():
         assert "required_revision_id" in tools[name].input_schema["properties"], name
     for name in ("find_text", "format_matches"):
         assert "pattern" in tools[name].input_schema["required"], name
+
+
+def test_find_matches_never_cross_paragraph_cell_or_image():
+    assert _matches(TABLE_DOC, r"\S+", regex=True) == [("Intro", 1, 6), ("LIG-1", 9, 14), ("x", 16, 17), ("LIG-22", 18, 24)]
+    assert _matches(IMAGE_DOC, r"See.*", regex=True) == [("See ", 1, 5)]
+    assert _matches(TABLE_DOC, r"^LIG-\d+$", regex=True) == [("LIG-1", 9, 14)]
+
+
+def test_header_first_run_without_start_index_is_mapped():
+    # Docs omits startIndex 0, which is where a header's first paragraph begins.
+    header = [{"endIndex": 9, "paragraph": {"elements": [
+        {"endIndex": 4, "textRun": {"content": "LIG-"}}, _run(4, "1 hi\n"),
+    ]}}]
+    text, indexes, _runs = DocsAPI._text_index_map(header)
+    assert text == "LIG-1 hi\n" and indexes[:5] == [0, 1, 2, 3, 4]
+
+
+def test_format_matches_refuses_too_many_matches(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().get().execute.return_value = TABLE_DOC
+    svc.documents().batchUpdate.reset_mock()
+    with pytest.raises(ValueError, match="exceeds max_matches=1"):
+        api.format_matches("D1", r"LIG-\d+", regex=True, bold=True, max_matches=1)
+    svc.documents().batchUpdate.assert_not_called()
+
+
+def test_format_matches_refuses_unguardable_write(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().get().execute.return_value = {**TABLE_DOC, "revisionId": None}
+    svc.documents().batchUpdate.reset_mock()
+    with pytest.raises(ValueError, match="no revisionId"):
+        api.format_matches("D1", "LIG-1", bold=True)
+    svc.documents().batchUpdate.assert_not_called()
+
+
+def test_append_text_guards_with_its_own_read(monkeypatch):
+    api, svc = _api_with_mock(monkeypatch)
+    svc.documents().get().execute.return_value = TABLE_DOC
+    svc.documents().batchUpdate().execute.return_value = {}
+    api.append_text("D1", "more")
+    body = svc.documents().batchUpdate.call_args.kwargs["body"]
+    assert body["writeControl"] == {"requiredRevisionId": "rev1"}
+    assert body["requests"][0]["insertText"]["location"] == {"index": 25}

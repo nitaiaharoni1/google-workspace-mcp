@@ -29,10 +29,17 @@ NUMBERED_BULLET_PRESETS = {
 DOCUMENT_MIME = "application/vnd.google-apps.document"
 
 # Stands in for each index an inline image, footnote reference, or other
-# non-text element occupies, so a match can never straddle one.
+# non-text element occupies, so indices stay right and searches can split on it.
 OBJECT_PLACEHOLDER = "\ufffc"
 
 DEFAULT_MAX_MATCHES = 200
+
+# One atomic batchUpdate per format_matches call; a loose regex on a long doc
+# could otherwise send tens of thousands of requests.
+DEFAULT_MAX_FORMAT_MATCHES = 500
+
+# Matches are searched within one paragraph and between non-text elements only.
+_SEARCHABLE_CHUNK = re.compile(f"[^\n{OBJECT_PLACEHOLDER}]+")
 
 
 def _is_revision_mismatch(exc):
@@ -42,7 +49,8 @@ def _is_revision_mismatch(exc):
         status = int(status)
     except (TypeError, ValueError):
         return False
-    return status == 400 and "revision" in core.map_exception(exc).args[0].lower()
+    # Real wording (checked live): "The required revision ID '...' does not match the latest revision."
+    return status == 400 and "required revision" in core.map_exception(exc).args[0].lower()
 
 
 def _stale_revision_error(document_id, revision_id):
@@ -101,6 +109,11 @@ class DocsAPI:
         current = doc.get("revisionId")
         if required_revision_id and current and required_revision_id != current:
             raise _stale_revision_error(document_id, required_revision_id)
+        if not (required_revision_id or current):
+            raise ValueError(
+                f"Docs returned no revisionId for {document_id} (the account may lack edit "
+                "access), so this write cannot be guarded against concurrent edits."
+            )
         return required_revision_id or current
 
     def get_document_text(self, document_id):
@@ -138,7 +151,8 @@ class DocsAPI:
         end = content[-1].get("endIndex", 2) - 1 if content else 1
         if end < 1:
             end = 1
-        return self.insert_text(document_id, text, index=end)
+        revision_id = self._guard_revision(document_id, doc, None)
+        return self.insert_text(document_id, text, index=end, required_revision_id=revision_id)
 
     def replace_all_text(self, document_id, find, replace, match_case=False):
         return self._batch(document_id, [{"replaceAllText": {
@@ -665,9 +679,8 @@ class DocsAPI:
                 para = el.get("paragraph")
                 if para:
                     for e in para.get("elements", []):
-                        start = e.get("startIndex")
-                        if start is None:
-                            continue
+                        # Docs omits zero-valued indices, which is where a header or footer starts.
+                        start = e.get("startIndex", 0)
                         tr = e.get("textRun")
                         if tr is None:
                             width = (e.get("endIndex") or start) - start
@@ -745,14 +758,20 @@ class DocsAPI:
         except re.error as e:
             raise ValueError(f"invalid regex {pattern!r}: {e}") from e
         matches = []
-        for m in rx.finditer(text):
-            if m.end() == m.start():
-                continue
-            start_index, end_index = DocsAPI._span_range(text, indexes, m.start(), m.end())
-            matches.append({
-                "text": m.group(0), "startIndex": start_index, "endIndex": end_index,
-                "pos": m.start(), "end": m.end(),
-            })
+        # A match that crossed a paragraph or cell break or an inline image would
+        # style structural indices, so each chunk is searched on its own and ^/$
+        # anchor to paragraph edges.
+        for chunk in _SEARCHABLE_CHUNK.finditer(text):
+            offset = chunk.start()
+            for m in rx.finditer(chunk.group()):
+                if m.end() == m.start():
+                    continue
+                pos, end = offset + m.start(), offset + m.end()
+                start_index, end_index = DocsAPI._span_range(text, indexes, pos, end)
+                matches.append({
+                    "text": m.group(0), "startIndex": start_index, "endIndex": end_index,
+                    "pos": pos, "end": end,
+                })
         return matches
 
     @staticmethod
@@ -808,7 +827,7 @@ class DocsAPI:
     def format_matches(self, document_id, pattern, regex=False, match_case=True, link_url_template=None,
                        clear_link=False, bold=None, italic=None, underline=None, strikethrough=None,
                        font_size=None, font_family=None, foreground_color=None, background_color=None,
-                       required_revision_id=None, max_listed=50):
+                       required_revision_id=None, max_matches=DEFAULT_MAX_FORMAT_MATCHES, max_listed=50):
         """Style every match, resolving positions from a fresh read and guarding the write with its revision."""
         if link_url_template is not None and clear_link:
             raise ValueError("pass link_url_template or clear_link, not both")
@@ -824,6 +843,11 @@ class DocsAPI:
         revision_id = self._guard_revision(document_id, doc, required_revision_id)
         text, indexes, runs = self._text_index_map(self._body_content(doc))
         matches = self._find_matches(text, indexes, pattern, regex, match_case)
+        if len(matches) > max_matches:
+            raise ValueError(
+                f"{len(matches)} matches for {pattern!r} exceeds max_matches={max_matches}; nothing "
+                "was written. Narrow the pattern, or raise max_matches if that many is intended."
+            )
         requests = []
         for m in matches:
             match_range = {"startIndex": m["startIndex"], "endIndex": m["endIndex"]}
