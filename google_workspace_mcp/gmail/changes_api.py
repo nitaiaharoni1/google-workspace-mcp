@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import base64
 import re
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.utils import formataddr, getaddresses
 from html import unescape
 
 from gmail_cli.api import GmailAPI
@@ -136,8 +139,92 @@ def project_message_text(message):
     }
 
 
+def address_header(value):
+    """Render To/Cc so only display names get RFC 2047 encoded.
+
+    Upstream sets raw strings on compat32 MIME objects, which encode the whole
+    header (address included) once any character is non-ASCII, e.g. a Hebrew
+    display name. Gmail then rejects it with "Invalid To header".
+    """
+    if not value:
+        return value
+    values = [value] if isinstance(value, str) else list(value)
+    return ", ".join(formataddr(pair) for pair in getaddresses(values) if pair[1])
+
+
 class GmailChangesAPI(GmailAPI):
     """GmailAPI plus the history-based change feed."""
+
+    def send_message(self, to, subject, body, attachments=None, cc=None, html=False):
+        return super().send_message(
+            address_header(to), subject, body, attachments=attachments, cc=address_header(cc), html=html
+        )
+
+    def create_draft(self, to, subject, body, attachments=None, cc=None, html=False):
+        return super().create_draft(
+            address_header(to), subject, body, attachments=attachments, cc=address_header(cc), html=html
+        )
+
+    def update_draft(self, draft_id, to=None, subject=None, body=None, attachments=None, cc=None, html=False):
+        return super().update_draft(
+            draft_id, to=address_header(to), subject=subject, body=body,
+            attachments=attachments, cc=address_header(cc), html=html,
+        )
+
+    def forward_message(self, message_id, to, body=None, attachments=None):
+        return super().forward_message(message_id, address_header(to), body=body, attachments=attachments)
+
+    def _build_reply(self, message_id, body, reply_all, additional_cc, attachments):
+        # Mirrors upstream reply_to_message/draft_reply, but the recipients are
+        # read from the original's headers, so they go through address_header.
+        original = self.get_message(message_id, format="full")
+        headers = original.get("payload", {}).get("headers", [])
+        subject = _header_value(headers, "Subject")
+        if not subject.startswith("Re: "):
+            subject = f"Re: {subject}"
+
+        if attachments:
+            reply = MIMEMultipart()
+            reply.attach(MIMEText(body, "plain"))
+            self._attach_files(reply, attachments)
+        else:
+            reply = MIMEText(body)
+        reply["to"] = address_header(_header_value(headers, "From"))
+        reply["subject"] = subject
+
+        cc_list = []
+        if reply_all and _header_value(headers, "Cc"):
+            cc_list.append(_header_value(headers, "Cc"))
+        if additional_cc:
+            cc_list.append(additional_cc)
+        if cc_list:
+            reply["cc"] = address_header(cc_list)
+
+        message_id_header = _header_value(headers, "Message-ID")
+        if message_id_header:
+            reply["In-Reply-To"] = message_id_header
+            reply["References"] = message_id_header
+
+        return {
+            "raw": base64.urlsafe_b64encode(reply.as_bytes()).decode(),
+            "threadId": original.get("threadId"),
+        }
+
+    def reply_to_message(self, message_id, body, reply_all=False, additional_cc=None, attachments=None):
+        message = self._build_reply(message_id, body, reply_all, additional_cc, attachments)
+        try:
+            return self.service.users().messages().send(userId=self.user_id, body=message).execute()
+        except HttpError as error:
+            raise Exception(f"Failed to reply to message: {error}")
+
+    def draft_reply(self, message_id, body, reply_all=False, additional_cc=None, attachments=None):
+        message = self._build_reply(message_id, body, reply_all, additional_cc, attachments)
+        try:
+            return self.service.users().drafts().create(
+                userId=self.user_id, body={"message": message}
+            ).execute()
+        except HttpError as error:
+            raise Exception(f"Failed to create draft reply: {error}")
 
     def _fetch_attachment_data(self, message_id, attachment_id):
         result = self.service.users().messages().attachments().get(
