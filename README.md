@@ -179,38 +179,29 @@ than blocking the protocol.
 ```json
 {
   "mcpServers": {
-    "google-gmail": {
+    "google-workspace": {
       "command": "uvx",
-      "args": ["--from", "google-workspace-suite-mcp==0.7.0", "gmail-mcp"]
-    },
-    "google-calendar": {
-      "command": "uvx",
-      "args": ["--from", "google-workspace-suite-mcp==0.7.0", "gcal-mcp"]
-    },
-    "google-sheets": {
-      "command": "uvx",
-      "args": ["--from", "google-workspace-suite-mcp==0.7.0", "gsheets-mcp"]
-    },
-    "google-docs": {
-      "command": "uvx",
-      "args": ["--from", "google-workspace-suite-mcp==0.7.0", "gdocs-mcp"]
-    },
-    "google-drive": {
-      "command": "uvx",
-      "args": ["--from", "google-workspace-suite-mcp==0.7.0", "gdrive-mcp"]
+      "args": ["--from", "google-workspace-suite-mcp==0.7.0", "gworkspace-mcp"]
     }
   }
 }
 ```
 
+`gworkspace-mcp` serves all five services from one process (~130MB instead of
+~450MB for five). Tools keep their names; the few that two services share get
+the service as a prefix (`drive_list_changes`, `sheets_add_comment`). If you
+only want some services, register their servers separately instead:
+`gmail-mcp`, `gcal-mcp`, `gsheets-mcp`, `gdocs-mcp`, `gdrive-mcp`, each as its
+own entry with the same `uvx --from` args.
+
 The `==0.7.0` pin means launches come from uv's cache after the first one:
 fast startup, works offline until the uv cache is cleaned, and a new release
-only runs once you choose it. To upgrade, bump the version in all five entries
-and restart Claude. If you'd rather get every release automatically, use this
-form instead, which checks PyPI on every launch:
+only runs once you choose it. To upgrade, bump the version and restart Claude.
+If you'd rather get every release automatically, use this form instead, which
+checks PyPI on every launch:
 
 ```json
-"args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "gmail-mcp"]
+"args": ["--refresh", "--from", "google-workspace-suite-mcp@latest", "gworkspace-mcp"]
 ```
 
 GUI clients such as Claude Desktop and Cursor do not inherit your shell PATH,
