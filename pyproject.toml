@@ -47,6 +47,7 @@ gcal-mcp = "google_workspace_mcp.calendar.server:main"
 gsheets-mcp = "google_workspace_mcp.sheets.server:main"
 gdocs-mcp = "google_workspace_mcp.docs.server:main"
 gdrive-mcp = "google_workspace_mcp.drive.server:main"
+gworkspace-mcp = "google_workspace_mcp.workspace.server:main"
 # Out-of-band auth CLI (from google-auth-core); shipped here so a single
 # `pipx install google-workspace-suite-mcp` also provides `google-auth login`.
 google-auth = "google_auth_core.cli:main"

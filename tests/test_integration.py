@@ -309,6 +309,26 @@ async def test_all_servers_expose_common_tools():
 
 
 @pytest.mark.anyio
+async def test_workspace_server_carries_every_tool_unchanged():
+    """gworkspace-mcp exposes each server's tools once, prefixing only names two
+    servers share, with the same schema, annotations and description."""
+    from google_workspace_mcp.workspace import server as w
+
+    combined = {t.name: t for t in await w.mcp.list_tools()}
+    assert {"list_accounts", "whoami", "auth_status"}.issubset(combined)
+    for service, mod in w._SERVICES.items():
+        for t in await mod.mcp.list_tools():
+            if t.name in ("list_accounts", "whoami", "auth_status"):
+                continue
+            c = combined.get(t.name) or combined[f"{service}_{t.name}"]
+            assert (c.input_schema, c.annotations, c.description) == (
+                t.input_schema, t.annotations, t.description
+            )
+    assert "list_changes" not in combined
+    assert {"gmail_list_changes", "drive_list_changes"}.issubset(combined)
+
+
+@pytest.mark.anyio
 async def test_contact_search_on_gmail_and_calendar_only():
     from google_workspace_mcp.calendar import server as c
     from google_workspace_mcp.docs import server as d
