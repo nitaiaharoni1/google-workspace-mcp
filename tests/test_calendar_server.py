@@ -176,6 +176,7 @@ async def test_create_event_calls_api_with_correct_args(fake_api):
         timezone="UTC",
         color_id=None,
         add_meet=False,
+        send_updates="all",
     )
 
 

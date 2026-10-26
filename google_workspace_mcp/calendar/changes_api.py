@@ -1,6 +1,10 @@
 """Calendar syncToken-based change feed (subclass of upstream CalendarAPI)."""
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
 from google_calendar_cli.api import CalendarAPI
 from google_calendar_cli.utils import parse_datetime
 from googleapiclient.errors import HttpError
@@ -46,6 +50,63 @@ def trim_event(event):
 
 class CalendarChangesAPI(CalendarAPI):
     """CalendarAPI plus syncToken-based incremental event listing."""
+
+    def create_event(
+        self,
+        summary,
+        start_time=None,
+        end_time=None,
+        description=None,
+        location=None,
+        calendar_id="primary",
+        attendees=None,
+        recurrence=None,
+        timezone="UTC",
+        color_id=None,
+        add_meet=False,
+        send_updates="all",
+    ):
+        # Upstream inserts without sendUpdates, so Google creates the event but
+        # never emails the attendees an invitation.
+        if start_time:
+            start_dt = parse_datetime(start_time)
+            if not start_dt:
+                raise ValueError(f"start_time is not a parseable datetime: {start_time!r}")
+        else:
+            start_dt = datetime.now(ZoneInfo(timezone))
+        if end_time:
+            end_dt = parse_datetime(end_time)
+            if not end_dt:
+                raise ValueError(f"end_time is not a parseable datetime: {end_time!r}")
+        else:
+            end_dt = start_dt + timedelta(hours=1)
+
+        event = {
+            "summary": summary,
+            "start": {"dateTime": start_dt.isoformat(), "timeZone": timezone},
+            "end": {"dateTime": end_dt.isoformat(), "timeZone": timezone},
+        }
+        if description:
+            event["description"] = description
+        if location:
+            event["location"] = location
+        if attendees:
+            event["attendees"] = [{"email": email} for email in attendees]
+        if recurrence:
+            event["recurrence"] = recurrence if isinstance(recurrence, list) else [recurrence]
+        if color_id:
+            event["colorId"] = color_id
+
+        params = {"calendarId": calendar_id, "body": event, "sendUpdates": send_updates}
+        if add_meet:
+            event["conferenceData"] = {
+                "createRequest": {
+                    "requestId": str(uuid.uuid4()),
+                    "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                }
+            }
+            params["conferenceDataVersion"] = 1
+        return self.service.events().insert(**params).execute()
 
     def list_event_changes(
         self,

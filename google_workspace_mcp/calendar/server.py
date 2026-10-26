@@ -248,8 +248,9 @@ def create_event(
     timezone: str = "UTC",
     color_id: str | None = None,
     add_meet: bool = False,
+    send_updates: str = "all",
 ) -> dict:
-    """Create a new calendar event."""
+    """Create a new calendar event. Attendees are emailed an invite unless send_updates is 'none'."""
     api, resolved = _api(account)
     data = run_tool(
         lambda: api.create_event(
@@ -264,6 +265,7 @@ def create_event(
             timezone=timezone,
             color_id=color_id,
             add_meet=add_meet,
+            send_updates=send_updates,
         )
     )
     return ok(resolved, data)
