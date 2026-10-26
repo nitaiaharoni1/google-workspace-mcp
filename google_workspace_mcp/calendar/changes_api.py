@@ -34,6 +34,22 @@ _STATUS_EVENT_TYPES = {
 }
 
 
+def _event_time(value, timezone, field):
+    parsed = parse_datetime(value)
+    if not parsed:
+        raise ValueError(f"{field} is not a parseable datetime: {value!r}")
+    return {"dateTime": parsed.isoformat(), "timeZone": timezone}
+
+
+def _meet_request():
+    return {
+        "createRequest": {
+            "requestId": str(uuid.uuid4()),
+            "conferenceSolutionKey": {"type": "hangoutsMeet"},
+        }
+    }
+
+
 def trim_event(event):
     """Return a compact event dict for change-feed responses."""
     return {
@@ -66,26 +82,21 @@ class CalendarChangesAPI(CalendarAPI):
         add_meet=False,
         send_updates="all",
     ):
-        # Upstream inserts without sendUpdates, so Google creates the event but
-        # never emails the attendees an invitation.
-        if start_time:
-            start_dt = parse_datetime(start_time)
-            if not start_dt:
-                raise ValueError(f"start_time is not a parseable datetime: {start_time!r}")
-        else:
-            start_dt = datetime.now(ZoneInfo(timezone))
+        # Upstream never passes sendUpdates on event writes, so Google applies the
+        # change but never emails the attendees. create/update/delete/quick-add/
+        # move are overridden here for that reason alone.
+        start = (
+            _event_time(start_time, timezone, "start_time")
+            if start_time
+            else {"dateTime": datetime.now(ZoneInfo(timezone)).isoformat(), "timeZone": timezone}
+        )
         if end_time:
-            end_dt = parse_datetime(end_time)
-            if not end_dt:
-                raise ValueError(f"end_time is not a parseable datetime: {end_time!r}")
+            end = _event_time(end_time, timezone, "end_time")
         else:
-            end_dt = start_dt + timedelta(hours=1)
+            end_dt = datetime.fromisoformat(start["dateTime"]) + timedelta(hours=1)
+            end = {"dateTime": end_dt.isoformat(), "timeZone": timezone}
 
-        event = {
-            "summary": summary,
-            "start": {"dateTime": start_dt.isoformat(), "timeZone": timezone},
-            "end": {"dateTime": end_dt.isoformat(), "timeZone": timezone},
-        }
+        event = {"summary": summary, "start": start, "end": end}
         if description:
             event["description"] = description
         if location:
@@ -99,14 +110,75 @@ class CalendarChangesAPI(CalendarAPI):
 
         params = {"calendarId": calendar_id, "body": event, "sendUpdates": send_updates}
         if add_meet:
-            event["conferenceData"] = {
-                "createRequest": {
-                    "requestId": str(uuid.uuid4()),
-                    "conferenceSolutionKey": {"type": "hangoutsMeet"},
-                }
-            }
+            event["conferenceData"] = _meet_request()
             params["conferenceDataVersion"] = 1
         return self.service.events().insert(**params).execute()
+
+    def update_event(
+        self,
+        event_id,
+        summary=None,
+        start_time=None,
+        end_time=None,
+        description=None,
+        location=None,
+        calendar_id="primary",
+        attendees=None,
+        recurrence=None,
+        timezone=None,
+        color_id=None,
+        add_meet=False,
+        remove_meet=False,
+        send_updates="all",
+    ):
+        event = self.get_event(event_id, calendar_id)
+        timezone = timezone or event.get("start", {}).get("timeZone", "UTC")
+        if summary:
+            event["summary"] = summary
+        if start_time:
+            event["start"] = _event_time(start_time, timezone, "start_time")
+        if end_time:
+            event["end"] = _event_time(end_time, timezone, "end_time")
+        if description is not None:
+            event["description"] = description
+        if location is not None:
+            event["location"] = location
+        if attendees is not None:
+            event["attendees"] = [{"email": email} for email in attendees]
+        if recurrence is not None:
+            event["recurrence"] = recurrence if isinstance(recurrence, list) else [recurrence]
+        if color_id == "":
+            event.pop("colorId", None)
+        elif color_id is not None:
+            event["colorId"] = color_id
+
+        params = {"calendarId": calendar_id, "eventId": event_id, "body": event, "sendUpdates": send_updates}
+        if remove_meet:
+            event.pop("conferenceData", None)
+        elif add_meet:
+            event["conferenceData"] = _meet_request()
+        if add_meet or remove_meet:
+            params["conferenceDataVersion"] = 1
+        return self.service.events().update(**params).execute()
+
+    def delete_event(self, event_id, calendar_id="primary", send_updates="all"):
+        self.service.events().delete(
+            calendarId=calendar_id, eventId=event_id, sendUpdates=send_updates
+        ).execute()
+        return True
+
+    def quick_add_event(self, text, calendar_id="primary", send_updates="all"):
+        return self.service.events().quickAdd(
+            calendarId=calendar_id, text=text, sendUpdates=send_updates
+        ).execute()
+
+    def move_event(self, event_id, destination_calendar_id, calendar_id="primary", send_updates="all"):
+        return self.service.events().move(
+            calendarId=calendar_id,
+            eventId=event_id,
+            destination=destination_calendar_id,
+            sendUpdates=send_updates,
+        ).execute()
 
     def list_event_changes(
         self,

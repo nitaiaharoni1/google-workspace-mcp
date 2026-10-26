@@ -259,7 +259,7 @@ async def test_delete_event_calls_api(fake_api):
 
     assert data["ok"] is True
     assert data["data"] is True
-    fake_api.delete_event.assert_called_once_with("abc123", calendar_id="primary")
+    fake_api.delete_event.assert_called_once_with("abc123", calendar_id="primary", send_updates="all")
 
 
 @pytest.mark.anyio
@@ -347,7 +347,7 @@ async def test_quick_add_event(fake_api):
     data = _parse(result)
     assert data["data"]["id"] == "qa1"
     fake_api.quick_add_event.assert_called_once_with(
-        text="Lunch tomorrow 12pm", calendar_id="primary"
+        text="Lunch tomorrow 12pm", calendar_id="primary", send_updates="all"
     )
 
 

@@ -346,8 +346,9 @@ def update_event(
     color_id: str | None = None,
     add_meet: bool = False,
     remove_meet: bool = False,
+    send_updates: str = "all",
 ) -> dict:
-    """Update fields on an existing calendar event."""
+    """Update fields on an existing calendar event. Attendees are emailed the change unless send_updates is 'none'."""
     api, resolved = _api(account)
     data = run_tool(
         lambda: api.update_event(
@@ -364,6 +365,7 @@ def update_event(
             color_id=color_id,
             add_meet=add_meet,
             remove_meet=remove_meet,
+            send_updates=send_updates,
         )
     )
     return ok(resolved, data)
@@ -375,10 +377,11 @@ def quick_add_event(
     *,
     text: str,
     calendar_id: str = "primary",
+    send_updates: str = "all",
 ) -> dict:
     """Create an event from a natural-language description (e.g. 'Meeting tomorrow 3pm')."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.quick_add_event(text=text, calendar_id=calendar_id))
+    data = run_tool(lambda: api.quick_add_event(text=text, calendar_id=calendar_id, send_updates=send_updates))
     return ok(resolved, data)
 
 
@@ -389,6 +392,7 @@ def move_event(
     event_id: str,
     destination_calendar_id: str,
     calendar_id: str = "primary",
+    send_updates: str = "all",
 ) -> dict:
     """Move an event from one calendar to another."""
     api, resolved = _api(account)
@@ -397,6 +401,7 @@ def move_event(
             event_id=event_id,
             destination_calendar_id=destination_calendar_id,
             calendar_id=calendar_id,
+            send_updates=send_updates,
         )
     )
     return ok(resolved, data)
@@ -542,10 +547,11 @@ def delete_event(
     *,
     event_id: str,
     calendar_id: str = "primary",
+    send_updates: str = "all",
 ) -> dict:
-    """Permanently delete a calendar event."""
+    """Permanently delete a calendar event. Attendees are emailed a cancellation unless send_updates is 'none'."""
     api, resolved = _api(account)
-    data = run_tool(lambda: api.delete_event(event_id, calendar_id=calendar_id))
+    data = run_tool(lambda: api.delete_event(event_id, calendar_id=calendar_id, send_updates=send_updates))
     return ok(resolved, data)
 
 
