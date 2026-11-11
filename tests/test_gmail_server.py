@@ -160,11 +160,17 @@ class FakeAPI:
         return {"changes": [], "new_history_token": "101"}
 
     # WRITE methods
-    def send_message(self, to, subject, body, attachments=None, cc=None, html=False):
-        self._record("send_message", to=to, subject=subject, body=body, cc=cc, html=html, attachments=attachments)
+    def send_message(self, to, subject, body, attachments=None, cc=None, html=False, signature=True):
+        self._record(
+            "send_message", to=to, subject=subject, body=body, cc=cc, html=html,
+            attachments=attachments, signature=signature,
+        )
         return {"id": "sent1", "threadId": "t1"}
 
-    def reply_to_message(self, message_id, body, reply_all=False, additional_cc=None, attachments=None):
+    def reply_to_message(
+        self, message_id, body, reply_all=False, additional_cc=None, attachments=None, html=False,
+        signature=True,
+    ):
         self._record(
             "reply_to_message",
             message_id=message_id,
@@ -172,10 +178,15 @@ class FakeAPI:
             reply_all=reply_all,
             additional_cc=additional_cc,
             attachments=attachments,
+            html=html,
+            signature=signature,
         )
         return {"id": "sent2"}
 
-    def draft_reply(self, message_id, body, reply_all=False, additional_cc=None, attachments=None):
+    def draft_reply(
+        self, message_id, body, reply_all=False, additional_cc=None, attachments=None, html=False,
+        signature=True,
+    ):
         self._record(
             "draft_reply",
             message_id=message_id,
@@ -183,6 +194,8 @@ class FakeAPI:
             reply_all=reply_all,
             additional_cc=additional_cc,
             attachments=attachments,
+            html=html,
+            signature=signature,
         )
         return {"id": "draft_reply1"}
 
@@ -212,12 +225,20 @@ class FakeAPI:
         self._record("forward_message", message_id=message_id, to=to, body=body, attachments=attachments)
         return {"id": "sent3"}
 
-    def create_draft(self, to, subject, body, attachments=None, cc=None, html=False):
-        self._record("create_draft", to=to, subject=subject, body=body, cc=cc, html=html)
+    def create_draft(self, to, subject, body, attachments=None, cc=None, html=False, signature=True):
+        self._record(
+            "create_draft", to=to, subject=subject, body=body, cc=cc, html=html, signature=signature
+        )
         return {"id": "draft_new"}
 
-    def update_draft(self, draft_id, to=None, subject=None, body=None, attachments=None, cc=None, html=False):
-        self._record("update_draft", draft_id=draft_id, to=to, subject=subject, body=body, cc=cc, html=html)
+    def update_draft(
+        self, draft_id, to=None, subject=None, body=None, attachments=None, cc=None, html=False,
+        signature=True,
+    ):
+        self._record(
+            "update_draft", draft_id=draft_id, to=to, subject=subject, body=body, cc=cc, html=html,
+            signature=signature,
+        )
         return {"id": draft_id}
 
     def modify_message(self, message_id, add_label_ids=None, remove_label_ids=None):

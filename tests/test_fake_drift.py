@@ -62,6 +62,17 @@ def _real_has_var_keyword(sig: inspect.Signature) -> bool:
     )
 
 
+def _overridden_by_wrapper(real_cls: type) -> set[str]:
+    """Methods of ``real_cls`` that a wrapper also paired with the fake defines
+    itself: the server never reaches the parent's version of those."""
+    names: set[str] = set()
+    for _, _, module_path, class_name in PAIRS:
+        wrapper = _load_class(module_path, class_name)
+        if wrapper is not real_cls and issubclass(wrapper, real_cls):
+            names |= {name for name, attr in vars(wrapper).items() if callable(attr)}
+    return names
+
+
 def _check_pair(
     fake_module: str,
     fake_name: str,
@@ -71,10 +82,15 @@ def _check_pair(
     fake_cls = _load_fake_class(fake_module, fake_name)
     real_cls = _load_class(real_module, real_name)
     errors: list[str] = []
+    overridden = _overridden_by_wrapper(real_cls)
 
     for method_name, fake_fn in _fake_methods(fake_cls):
         if not hasattr(real_cls, method_name):
             # Fake may implement server features ahead of the pinned sibling release.
+            continue
+        if method_name in overridden:
+            # The server calls the override, which may take more than its parent
+            # (html, signature): the override's own pair is the one that binds.
             continue
 
         real_fn = getattr(real_cls, method_name)
