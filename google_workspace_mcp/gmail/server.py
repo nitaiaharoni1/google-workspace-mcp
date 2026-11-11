@@ -362,6 +362,7 @@ def send_message(
     cc: str | None = None,
     attachments: list[str] | None = None,
     html: bool = False,
+    signature: bool = True,
 ) -> dict:
     """Send an email message.
 
@@ -369,9 +370,14 @@ def send_message(
     The files are read from disk on the server, so large binaries are fine.
     html: set True to send `body` as HTML (inline images via <img src>, links,
     formatting). A plain-text fallback is generated automatically.
+    Right-to-left text (Hebrew, Arabic) is laid out from the right
+    automatically, also when `body` is plain text.
+    signature: the account's Gmail signature is appended when it has one; set
+    False to leave it out. The answer's `signature` says what happened
+    (added, none_configured, already_in_body, off).
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.send_message(to=to, subject=subject, body=body, cc=cc, attachments=safe_paths(attachments), html=html))
+    data = run_tool(lambda: api.send_message(to=to, subject=subject, body=body, cc=cc, attachments=safe_paths(attachments), html=html, signature=signature))
     return ok(resolved, data)
 
 
@@ -384,13 +390,21 @@ def reply_to_message(
     reply_all: bool = False,
     additional_cc: str | None = None,
     attachments: list[str] | None = None,
+    html: bool = False,
+    signature: bool = True,
 ) -> dict:
     """Reply to a message; set reply_all=True to reply to all recipients.
 
     attachments: list of LOCAL file paths to attach (read from disk server-side).
+    html: set True when `body` is HTML. A plain-text fallback is generated.
+    Right-to-left text (Hebrew, Arabic) is laid out from the right
+    automatically, also when `body` is plain text.
+    signature: the account's Gmail signature is appended when it has one; set
+    False to leave it out. The answer's `signature` says what happened
+    (added, none_configured, already_in_body, off).
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.reply_to_message(message_id, body=body, reply_all=reply_all, additional_cc=additional_cc, attachments=safe_paths(attachments)))
+    data = run_tool(lambda: api.reply_to_message(message_id, body=body, reply_all=reply_all, additional_cc=additional_cc, attachments=safe_paths(attachments), html=html, signature=signature))
     return ok(resolved, data)
 
 
@@ -403,6 +417,8 @@ def draft_reply(
     reply_all: bool = False,
     additional_cc: str | None = None,
     attachments: list[str] | None = None,
+    html: bool = False,
+    signature: bool = True,
 ) -> dict:
     """Create a DRAFT reply kept in the original thread (review before sending).
 
@@ -410,9 +426,15 @@ def draft_reply(
     saves a draft instead of sending, so it threads correctly when you send it
     from Gmail. Set reply_all=True to CC the original recipients.
     attachments: list of LOCAL file paths to attach (read from disk server-side).
+    html: set True when `body` is HTML. A plain-text fallback is generated.
+    Right-to-left text (Hebrew, Arabic) is laid out from the right
+    automatically, also when `body` is plain text.
+    signature: the account's Gmail signature is appended when it has one; set
+    False to leave it out. The answer's `signature` says what happened
+    (added, none_configured, already_in_body, off).
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.draft_reply(message_id, body=body, reply_all=reply_all, additional_cc=additional_cc, attachments=safe_paths(attachments)))
+    data = run_tool(lambda: api.draft_reply(message_id, body=body, reply_all=reply_all, additional_cc=additional_cc, attachments=safe_paths(attachments), html=html, signature=signature))
     return ok(resolved, data)
 
 
@@ -443,15 +465,21 @@ def create_draft(
     cc: str | None = None,
     attachments: list[str] | None = None,
     html: bool = False,
+    signature: bool = True,
 ) -> dict:
     """Create a draft message (supports cc + attachments together).
 
     attachments: list of LOCAL file paths to attach (read from disk server-side).
     html: set True to store `body` as HTML (inline images via <img src>, links,
     formatting). A plain-text fallback is generated automatically.
+    Right-to-left text (Hebrew, Arabic) is laid out from the right
+    automatically, also when `body` is plain text.
+    signature: the account's Gmail signature is appended when it has one; set
+    False to leave it out. The answer's `signature` says what happened
+    (added, none_configured, already_in_body, off).
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.create_draft(to=to, subject=subject, body=body, cc=cc, attachments=safe_paths(attachments), html=html))
+    data = run_tool(lambda: api.create_draft(to=to, subject=subject, body=body, cc=cc, attachments=safe_paths(attachments), html=html, signature=signature))
     return ok(resolved, data)
 
 
@@ -466,6 +494,7 @@ def update_draft(
     cc: str | None = None,
     attachments: list[str] | None = None,
     html: bool = False,
+    signature: bool = True,
 ) -> dict:
     """Update an existing draft, preserving fields you don't pass.
 
@@ -475,9 +504,11 @@ def update_draft(
     attachments: list of LOCAL file paths (read from disk server-side).
     html: set True when `body` is HTML (inline images via <img src>, links,
     formatting). A plain-text fallback is generated automatically.
+    A new `body` is laid out right to left when it is Hebrew or Arabic, and
+    gets the account's Gmail signature unless signature=False.
     """
     api, resolved = _api(account)
-    data = run_tool(lambda: api.update_draft(draft_id, to=to, subject=subject, body=body, cc=cc, attachments=safe_paths(attachments), html=html))
+    data = run_tool(lambda: api.update_draft(draft_id, to=to, subject=subject, body=body, cc=cc, attachments=safe_paths(attachments), html=html, signature=signature))
     return ok(resolved, data)
 
 

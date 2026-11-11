@@ -181,7 +181,7 @@ than blocking the protocol.
   "mcpServers": {
     "google-workspace": {
       "command": "uvx",
-      "args": ["--from", "google-workspace-suite-mcp==0.7.2", "gworkspace-mcp"]
+      "args": ["--from", "google-workspace-suite-mcp==0.7.3", "gworkspace-mcp"]
     }
   }
 }
@@ -194,7 +194,7 @@ only want some services, register their servers separately instead:
 `gmail-mcp`, `gcal-mcp`, `gsheets-mcp`, `gdocs-mcp`, `gdrive-mcp`, each as its
 own entry with the same `uvx --from` args.
 
-The `==0.7.2` pin means launches come from uv's cache after the first one:
+The `==0.7.3` pin means launches come from uv's cache after the first one:
 fast startup, works offline until the uv cache is cleaned, and a new release
 only runs once you choose it. To upgrade, bump the version and restart Claude.
 If you'd rather get every release automatically, use this form instead, which
